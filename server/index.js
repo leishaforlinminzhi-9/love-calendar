@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +46,12 @@ const ledger = createLedger({
   fallbackCostUsd: Number(env.FALLBACK_COST_USD) || 0.02,
   priceOverride: env.PRICE_PER_M,
 });
+// Moving from the file store to Upstash: carry the spend total over instead of starting again from $0.
+if (store.driver !== 'file') {
+  try {
+    if (!(await store.getJson('ledger'))) await store.setJson('ledger', JSON.parse(readFileSync(join(DATA_DIR, 'ledger.json'), 'utf8')));
+  } catch {} // nothing to migrate, or the store is unreachable: init() below reports that properly
+}
 try {
   await ledger.init(); // first real read from the store: a wrong Upstash URL/token fails here, at startup
 } catch (err) {
