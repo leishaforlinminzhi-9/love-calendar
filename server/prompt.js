@@ -1,7 +1,8 @@
 import { typeOf } from '../frontend/love-types.js';
 
 // Bump when the look of the icon set is changed on purpose: it invalidates the image cache.
-export const PROMPT_VERSION = 1;
+// v2: the subject is taken from the user's text (v1 always drew the type's fixed picture, e.g. a bowl of soup for any food).
+export const PROMPT_VERSION = 2;
 
 // The style block never changes, so every icon in the calendar looks like one set.
 // Only the subject (from the love type) and the palette (from the love type) vary.
@@ -39,17 +40,20 @@ function clean(text) {
 export function buildPrompt(typeId, text) {
   const t = typeOf(typeId);
   const moment = clean(text);
+  const subject = moment
+    ? `Moment: "${moment}" (category: ${t.theme}).\n` +
+      'Subject: draw the ONE most recognisable concrete object from this moment, the thing it actually mentions (the real food, gift, item or place), ' +
+      'as a single simple, charming object, optionally with one tiny heart or sparkle. Never swap it for a different object.\n' +
+      `If the moment mentions no concrete object (only words, feelings or actions), draw this instead: ${t.motif}.`
+    : `Subject: ${t.motif}.`;
   return [
     'A cute app icon illustration for a warm love-journal app.',
-    `Subject: ${t.motif}.`,
-    moment ? `Add one tiny subtle detail inspired by this moment (never draw any writing): "${moment}".` : '',
+    subject,
     'Composition: a single centered subject filling about 70% of the canvas, keep background props minimal, ' +
       `on a full-bleed square canvas with a smooth ${t.colorName} gradient background going from ${t.from} to ${t.to}.`,
     `Palette: built around ${t.colorName} (${t.color}) and cream white, with small accents of ${t.accentName}.`,
     `Style: ${STYLE}`,
     NEGATIVE,
     'Keep exactly the same style, lighting and level of detail as the rest of the icon set.',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ].join('\n');
 }

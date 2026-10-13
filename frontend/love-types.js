@@ -7,6 +7,7 @@ export const LOVE_TYPES = [
     from: '#FFE0EE', to: '#FFA6CF', color: '#FF7EB6',
     colorName: 'bubblegum rose pink', accentName: 'butter yellow',
     motif: 'a plump speech bubble with a small glossy heart inside',
+    theme: 'kind words, a compliment, thanks or a message',
     keywords: ['我爱你', '爱你', '想你', '喜欢你', '夸', '赞', '表扬', '称赞', '谢谢', '感谢', '道歉', '对不起', '告白', '情话', '留言', '短信', '微信', '写信', '信', 'love you', 'miss you', 'thank', 'compliment', 'praise', 'sorry', 'letter'],
   },
   {
@@ -14,6 +15,7 @@ export const LOVE_TYPES = [
     from: '#D6F6EE', to: '#8EE0CC', color: '#4FCDB4',
     colorName: 'fresh mint teal', accentName: 'peach',
     motif: 'two cute round blob characters walking side by side and holding hands, with a tiny heart floating above them',
+    theme: 'spending time together (a walk, a movie, a date, waiting for someone)',
     keywords: ['陪', '一起', '散步', '约会', '看电影', '电影', '旅行', '旅游', '聊天', '聊了', '逛', '通话', '视频', '等我', 'together', 'date', 'walk', 'trip', 'movie', 'chat'],
   },
   {
@@ -21,6 +23,7 @@ export const LOVE_TYPES = [
     from: '#E9E0FF', to: '#BCA6FF', color: '#9B82FF',
     colorName: 'soft lavender purple', accentName: 'pink',
     motif: 'a gift box tied with a ribbon bow',
+    theme: 'a gift or a small present',
     keywords: ['礼物', '送给', '送了', '买给', '买了', '花', '玫瑰', '巧克力', '戒指', '项链', '红包', '手作', '纪念', 'gift', 'flower', 'present', 'bought', 'chocolate'],
   },
   {
@@ -28,6 +31,7 @@ export const LOVE_TYPES = [
     from: '#D9F0FF', to: '#8CCBFF', color: '#5BB5FF',
     colorName: 'clear sky blue', accentName: 'coral pink',
     motif: 'a cozy umbrella sheltering a small heart',
+    theme: 'taking care of someone (a pickup, help, an umbrella, medicine, a chore)',
     keywords: ['来接', '接我', '接你', '送我', '照顾', '帮', '修', '洗', '收拾', '打扫', '家务', '雨', '伞', '药', '生病', '感冒', '盖被', '叫醒', '提醒', '开车', 'care', 'help', 'pick up', 'drove', 'umbrella', 'clean', 'fix'],
   },
   {
@@ -35,6 +39,7 @@ export const LOVE_TYPES = [
     from: '#FFE3D6', to: '#FFAE8C', color: '#FF8F66',
     colorName: 'warm peach coral', accentName: 'rose pink',
     motif: 'two cute round blob characters hugging each other tightly',
+    theme: 'a hug, holding hands or being physically close',
     keywords: ['抱', '亲', '吻', '牵手', '摸头', '拥', '依偎', '靠', '握', '按摩', '捏', 'hug', 'kiss', 'cuddle', 'hold hands', 'snuggle', 'massage'],
   },
   {
@@ -42,6 +47,7 @@ export const LOVE_TYPES = [
     from: '#FFF4BF', to: '#FFD84F', color: '#FFC800',
     colorName: 'sunny lemon yellow', accentName: 'magenta pink',
     motif: 'a party popper bursting with confetti and a floating heart balloon',
+    theme: 'a surprise or a celebration (a birthday, decorations)',
     keywords: ['惊喜', '没想到', '突然', '意外', '准备了', '布置', '生日', '庆祝', '蛋糕', '烟花', '气球', 'surprise', 'birthday', 'cake', 'balloon', 'unexpected'],
   },
   {
@@ -49,6 +55,7 @@ export const LOVE_TYPES = [
     from: '#E4F7CF', to: '#A8DF7A', color: '#86CF55',
     colorName: 'spring leaf green', accentName: 'warm orange',
     motif: 'a tiny sprout with two leaves growing out of a heart-shaped pot, with a little sun above',
+    theme: 'encouragement, listening and understanding',
     keywords: ['支持', '鼓励', '理解', '倾听', '听我', '包容', '相信', '安慰', '肯定', '加油', '信任', '尊重', '成长', 'support', 'encourage', 'listen', 'understand', 'trust', 'believe', 'comfort'],
   },
   {
@@ -56,6 +63,7 @@ export const LOVE_TYPES = [
     from: '#FFEBCF', to: '#FFBE6B', color: '#FFA63D',
     colorName: 'golden apricot orange', accentName: 'tomato red',
     motif: 'a steaming bowl of soup with heart-shaped steam and a pair of chopsticks',
+    theme: 'food or drink (a meal, a snack, coffee, bubble tea)',
     keywords: ['做饭', '煮', '饭', '菜', '汤', '吃', '早餐', '午餐', '晚餐', '宵夜', '咖啡', '奶茶', '甜点', '烤', '面', '粥', '带了', 'cook', 'meal', 'soup', 'dinner', 'breakfast', 'coffee', 'milk tea', 'snack', 'bake', 'food'],
   },
   {
@@ -63,6 +71,7 @@ export const LOVE_TYPES = [
     from: '#FFE1E1', to: '#FF9C9C', color: '#FF6B6B',
     colorName: 'warm coral red', accentName: 'cream white',
     motif: 'a plump glossy heart with a soft highlight and two tiny sparkles',
+    theme: 'a warm gesture',
     keywords: [],
   },
 ];
