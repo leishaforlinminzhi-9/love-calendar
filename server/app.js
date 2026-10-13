@@ -295,7 +295,8 @@ export function createApp({ env, store, ephemeralRisk = false }) {
         const small = await store.icons.get(key).catch(() => null);
         const image = small ?? (await store.images.get(key).catch(() => null));
         if (image && (small || RAW_IMAGE_RE.test(image))) return json(request, 200, { image, cached: true, small: Boolean(small), iconKey: key });
-        throw new HttpError(404, 'not_cached', '还没有现成的图标');
+        // a miss is a normal answer, not an error: it must not show up as a failed request in the browser
+        return json(request, 200, { image: null, cached: false, iconKey: key });
       }
       if (fresh !== true) {
         // the small icon (uploaded by a browser) is preferred; the raw image kept at generation time is the fallback

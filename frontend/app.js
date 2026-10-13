@@ -992,25 +992,25 @@ async function healIcons({ force = false } = {}) {
       if (force || Date.now() >= (e.healCheckAt ?? 0)) {
         try {
           const res = await api('/api/generate', { text: e.text, type: e.type, cacheOnly: true }, 20_000);
-          Object.assign(e, {
-            icon: res.small ? res.image : await downscale(res.image),
-            iconKey: res.iconKey ?? e.iconKey ?? null,
-            iconUploaded: res.small === true,
-            status: 'ready',
-          });
-          popKeys.add(e.id);
+          if (res.image) {
+            Object.assign(e, {
+              icon: res.small ? res.image : await downscale(res.image),
+              iconKey: res.iconKey ?? e.iconKey ?? null,
+              iconUploaded: res.small === true,
+              status: 'ready',
+            });
+            popKeys.add(e.id);
+            changed.set(e.id, e);
+            continue;
+          }
+          e.healCheckAt = Date.now() + 2 * 60_000; // nothing stored yet: don't ask again for a couple of minutes
           changed.set(e.id, e);
-          continue;
         } catch (err) {
           if (err.status === 401) {
             reauth();
             break;
           }
           if (err.code === 'network') break; // offline again: try on the next sync
-          if (err.code === 'not_cached') {
-            e.healCheckAt = Date.now() + 2 * 60_000;
-            changed.set(e.id, e);
-          }
         }
       }
 
