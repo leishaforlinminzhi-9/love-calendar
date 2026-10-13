@@ -163,6 +163,10 @@ export function createApp({ env, store, ephemeralRisk = false }) {
     if (!upstream.ok) {
       const detail = String(parsed?.error?.message || parsed?.message || raw).replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***').slice(0, 200);
       console.error(`[image] upstream ${upstream.status}:`, detail);
+      // OpenAI refuses calls that come from a country it does not serve; say so plainly instead of a vague upstream error
+      if (upstream.status === 403 && /country|region|territory/i.test(detail)) {
+        throw new HttpError(502, 'upstream_region', '图像服务拒绝了后端当前所在地区的请求（OpenAI 不支持该地区）');
+      }
       throw new HttpError(502, 'upstream_error', `图像服务返回错误：${detail}`);
     }
 

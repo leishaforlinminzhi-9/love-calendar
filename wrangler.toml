@@ -23,3 +23,9 @@ ALLOWED_ORIGINS = "https://leishaforlinminzhi-9.github.io"
 OPEN_ACCESS = "true"
 DAILY_LIMIT = "100"
 BUDGET_WARN_USD = "50"
+
+# Run the Worker in ONE fixed cloud region instead of next to each visitor. By default a visitor in, say, Hong Kong makes
+# the Worker run in Hong Kong and call OpenAI from there, and OpenAI refuses calls from countries it does not serve
+# ("Country, region, or territory not supported"). Pinning it to a supported region fixes that for every visitor.
+[placement]
+region = "aws:us-east-1"
