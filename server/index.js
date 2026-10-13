@@ -136,7 +136,7 @@ const server = http.createServer(async (req, res) => {
     console.error(err);
     if (res.headersSent) return res.end();
     res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ error: 'server_error', message: '服务器出错了' }));
+    res.end(JSON.stringify({ error: 'server_error', message: '服务器错误' }));
   }
 });
 

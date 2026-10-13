@@ -5,14 +5,18 @@ const SLOTS = 2;
 const WEEKDAYS = '日一二三四五六';
 const DOW_MON_FIRST = ['一', '二', '三', '四', '五', '六', '日'];
 const EXAMPLES = [
-  '他下雨天来接我下班',
-  '她夸我做的饭很好吃',
-  '一起在小区里散了很久的步',
-  '妈妈偷偷塞给我一盒水果',
-  '朋友听我吐槽了一整晚',
-  '对自己说：你已经很棒了',
-  '收到一条“到家说一声”的消息',
-  '同事帮我带了一杯热咖啡',
+  'TA 下雨天来接我下班',
+  'TA 半夜给我煮了碗面',
+  'TA 提前到车站等我',
+  'TA 夸我今天表现很好',
+  'TA 给我准备了生日蛋糕',
+  'TA 抱了我很久',
+  '一起看了场电影',
+  'TA 主动洗了碗',
+  'TA 听我吐槽了一整晚',
+  'TA 说了句：想你了',
+  'TA 给我带了杯奶茶',
+  'TA 送了我一束花',
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -36,6 +40,12 @@ const example = (date, slot) => '比如：' + EXAMPLES[(parse(date).d + slot * 3
 const ls = {
   get: (k) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  remove: (k) => { try { localStorage.removeItem(k); } catch {} },
+};
+const ss = {
+  get: (k) => { try { return sessionStorage.getItem(k) ?? ''; } catch { return ''; } },
+  set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} },
+  remove: (k) => { try { sessionStorage.removeItem(k); } catch {} },
 };
 
 const state = {
@@ -99,8 +109,13 @@ function toastOnce(msg) {
 
 // ---------- rendering ----------
 
+// The icon for a banked ("too busy") slot: a small, round, sleepy zzz. Drawn as SVG so it looks the same everywhere.
+const ZZZ =
+  '<svg class="zzz" viewBox="0 0 64 64" aria-hidden="true">' +
+  '<path d="M9 44h12L9 57h12"/><path d="M24 27h15L24 44h15"/><path d="M42 7h17L42 28h17"/></svg>';
+
 function icon(e, cls = '') {
-  if (isBusy(e)) return `<span class="icon busy ${cls}"><span class="glyph">💤</span></span>`;
+  if (isBusy(e)) return `<span class="icon busy ${cls}">${ZZZ}</span>`;
   const t = typeOf(e.type);
   const classes = ['icon', cls, e.status === 'pending' && 'loading', popKeys.has(e.id) && 'pop'].filter(Boolean).join(' ');
   const inner = e.icon ? `<img src="${e.icon}" alt="" draggable="false">` : `<span class="glyph">${t.emoji}</span>`;
@@ -109,7 +124,7 @@ function icon(e, cls = '') {
 
 function renderCalendar() {
   const { y, m } = state.view;
-  $('monthLabel').textContent = `${y}年${m + 1}月`;
+  $('monthLabel').textContent = `${y}.${pad(m + 1)}`;
   const offset = (new Date(y, m, 1).getDay() + 6) % 7; // Monday-first
   const count = new Date(y, m + 1, 0).getDate();
   const today = todayKey();
@@ -123,7 +138,7 @@ function renderCalendar() {
     const busyCount = es.filter(isBusy).length;
     const cls = ['day-cell', key === today && 'today', key === state.selected && 'sel', key > limit && 'future'].filter(Boolean).join(' ');
     html +=
-      `<button class="${cls}" data-date="${key}" aria-pressed="${key === state.selected}" aria-label="${m + 1}月${d}日，${es.length - busyCount}份爱${busyCount ? `，攒着${busyCount}份` : ''}">` +
+      `<button class="${cls}" data-date="${key}" aria-pressed="${key === state.selected}" aria-label="${m + 1}月${d}日，${es.length - busyCount}条记录${busyCount ? `，攒${busyCount}` : ''}">` +
       `<span class="num">${d}</span><span class="icons" data-n="${shown.length}">${shown.map((e) => icon(e)).join('')}</span>` +
       `${more > 0 ? `<span class="more">+${more}</span>` : ''}</button>`;
   }
@@ -133,35 +148,35 @@ function renderCalendar() {
 function slotHTML(e) {
   const t = typeOf(e.type);
   let status = '';
-  if (e.status === 'pending') status = '<span class="slot-status">生成图标中…</span>';
-  else if (e.status === 'error') status = '<span class="slot-status err">图标没生成成功</span><button class="retry" data-retry>重试</button>';
+  if (e.status === 'pending') status = '<span class="slot-status">生成中…</span>';
+  else if (e.status === 'error') status = '<span class="slot-status err">图标生成失败</span><button class="retry" data-retry>重试</button>';
   return (
     `<div class="slot" role="button" tabindex="0" data-slot="${e.slot}">${icon(e, 'card-icon')}` +
     `<div class="slot-body"><div class="slot-text">${esc(e.text)}</div>` +
     `<div class="slot-meta"><span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>` +
-    `${e.slot >= SLOTS ? '<span class="type-chip redeem">🎁 兑现</span>' : ''}${status}</div></div></div>`
+    `${e.slot >= SLOTS ? '<span class="type-chip redeem">兑现</span>' : ''}${status}</div></div></div>`
   );
 }
 
 function busySlotHTML(e) {
   return (
     `<div class="slot busy" role="button" tabindex="0" data-slot="${e.slot}">${icon(e, 'card-icon')}` +
-    '<div class="slot-body"><div class="slot-text">太忙了，先攒着</div>' +
-    '<div class="slot-meta">之后可以兑现 · 点一下补写或取消</div></div></div>'
+    '<div class="slot-body"><div class="slot-text">已攒下</div>' +
+    '<div class="slot-meta">稍后兑现 · 点按可补记或取消</div></div></div>'
   );
 }
 
 function redeemHTML(owed) {
   return (
-    '<button class="slot add redeem" data-redeem><span class="plus">🎁</span>' +
-    `<span class="add-text"><span class="add-title">兑现一份积攒的爱</span><span class="add-sub">还欠 ${owed} 份 · 在这一天多写一份</span></span></button>`
+    '<button class="slot add redeem" data-redeem><span class="plus">+</span>' +
+    `<span class="add-text"><span class="add-title">兑现一条</span><span class="add-sub">还欠 ${owed} · 在这天额外记一条</span></span></button>`
   );
 }
 
 function addHTML(date, i) {
   return (
     `<button class="slot add" data-slot="${i}"><span class="plus">+</span>` +
-    `<span class="add-text"><span class="add-title">写下第 ${i + 1} 份爱</span><span class="add-sub">${esc(example(date, i))}</span></span></button>`
+    `<span class="add-text"><span class="add-title">记第 ${i + 1} 条</span><span class="add-sub">${esc(example(date, i))}</span></span></button>`
   );
 }
 
@@ -176,27 +191,27 @@ function renderDay() {
   const emptyN = es.filter((e) => !e).length;
   const extras = extrasOn(key);
   const { owed } = bank();
-  const dayWord = key === today ? '今天' : key === tomorrow ? '明天' : '这一天';
+  const dayWord = key === today ? '今天' : key === tomorrow ? '明天' : '这天';
 
   let html =
-    `<div class="day-head"><h2>${m + 1}月${d}日 · 周${WEEKDAYS[new Date(y, m, d).getDay()]}` +
+    `<div class="day-head"><h2>${m + 1}月${d}日 周${WEEKDAYS[new Date(y, m, d).getDay()]}` +
     `${key === today ? '<span class="tag">今天</span>' : key === tomorrow ? '<span class="tag soft">明天</span>' : ''}</h2>` +
-    `<span class="counter">${loveN}/${SLOTS}${busyN ? ` · 💤${busyN}` : ''}${extras.length ? ` · 🎁${extras.length}` : ''}</span></div>`;
+    `<span class="counter">${loveN}/${SLOTS}${busyN ? ` · 攒${busyN}` : ''}${extras.length ? ` · 兑现${extras.length}` : ''}</span></div>`;
 
   if (key > tomorrow) {
-    html += '<p class="day-lead">未来的爱，留给未来的你 ✨ 最多可以提前一天写哦。</p>';
+    html += '<p class="day-lead">还没到。最多提前一天。</p>';
   } else {
     if (loveN + busyN + extras.length === 0) {
-      html += `<p class="day-lead">${key === tomorrow ? '明天有哪些爱的表达？可以提前写下。' : `${dayWord}有哪些爱的表达？给出的、收到的，都算。`}</p>`;
+      html += `<p class="day-lead">${key === tomorrow ? '明天，可以提前记。' : `${dayWord}还没有记录。`}</p>`;
     }
     html += '<div class="slots">' + es.map((e, i) => (!e ? addHTML(key, i) : isBusy(e) ? busySlotHTML(e) : slotHTML(e))).join('') + '</div>';
     // too busy to write them? bank the empty slots now and pay them back later
-    if (emptyN) html += `<button class="busy-btn" data-busy>💤 ${dayWord}太忙了，先攒着（攒 ${emptyN} 份）</button>`;
+    if (emptyN) html += `<button class="busy-btn" data-busy>${dayWord}太忙 · 先攒 ${emptyN} 条</button>`;
     // extras: expressions written beyond the daily two, which pay back what was banked
     // (not on a day that was itself banked: too busy to write today, but writing extra today makes no sense)
     const canRedeem = owed > 0 && extras.length < EXTRA_SLOTS && busyN === 0;
     if (extras.length || canRedeem) {
-      html += '<div class="extras-title">兑现积攒的爱</div><div class="slots">' + extras.map(slotHTML).join('') + (canRedeem ? redeemHTML(owed) : '') + '</div>';
+      html += '<div class="extras-title">兑现</div><div class="slots">' + extras.map(slotHTML).join('') + (canRedeem ? redeemHTML(owed) : '') + '</div>';
     }
   }
   $('dayCard').innerHTML = html;
@@ -229,15 +244,15 @@ function renderStats() {
   const { banked, redeemed, owed } = bank();
 
   $('statsCard').innerHTML =
-    '<h3>本月的爱</h3>' +
+    '<h3>本月</h3>' +
     (total
-      ? `<p class="stats-sum">记录了 ${total} 份，最多的是「${rows[0].label}」</p>`
-      : '<p class="stats-sum">这个月还没有记录，从一份小小的心意开始吧</p>') +
+      ? `<p class="stats-sum">${total} 条 · 最多：${rows[0].label}</p>`
+      : '<p class="stats-sum">暂无记录</p>') +
     `<div class="bar">${rows.map((t) => `<i style="--c:${t.color};flex-grow:${counts.get(t.id)}" title="${t.label}"></i>`).join('')}</div>` +
     (total ? `<div class="legend">${rows.map((t) => `<span style="--c:${t.color}">${t.label} ${counts.get(t.id)}</span>`).join('')}</div>` : '') +
-    (run ? `<div class="streak">🌟 已连续记录 ${run} 天</div>` : '') +
+    (run ? `<div class="streak">连续 ${run} 天</div>` : '') +
     (banked
-      ? `<div class="bank"><b>💤 攒着 ${owed} 份爱待兑现</b><span>累计攒下 ${banked} 份 · 已兑现 ${redeemed} 份${owed ? ' · 找个空闲的日子多写几份吧' : ' · 都还清啦 🎉'}</span></div>`
+      ? `<div class="bank"><b>待兑现 ${owed}</b><span>累计攒 ${banked} · 已兑现 ${redeemed}</span></div>`
       : '');
 }
 
@@ -314,7 +329,7 @@ function syncEntryForm() {
   const t = typeOf(draft.type);
   const text = $('entryText').value.trim();
   document.querySelectorAll('#typeChips .chip').forEach((c) => c.setAttribute('aria-checked', String(c.dataset.type === draft.type)));
-  $('typeNote').textContent = draft.locked ? `已选择：${t.label}` : `自动识别为：${t.label}，也可以自己选`;
+  $('typeNote').textContent = draft.locked ? `${t.label}` : `自动识别：${t.label}`;
   $('entryCount').textContent = `${$('entryText').value.length}/60`;
 
   const prev = draft.entry;
@@ -333,8 +348,8 @@ function openEntry(date, slot) {
   const { m, d, y } = parse(date);
   draft = { date, slot, entry, busy, type: entry?.type ?? 'other', locked: Boolean(entry) };
 
-  $('entryTitle').textContent = entry ? '编辑这份爱' : busy ? '补上这份爱' : extra ? '兑现一份积攒的爱' : '写下一份爱';
-  $('entryDate').textContent = `${m + 1}月${d}日 周${WEEKDAYS[new Date(y, m, d).getDay()]} · ${extra ? '兑现' : `第 ${slot + 1} 份`}`;
+  $('entryTitle').textContent = entry ? '编辑' : busy ? '补记' : extra ? '兑现' : '新记录';
+  $('entryDate').textContent = `${m + 1}月${d}日 周${WEEKDAYS[new Date(y, m, d).getDay()]} · ${extra ? '兑现' : `第 ${slot + 1} 条`}`;
   $('entryText').value = entry?.text ?? '';
   $('entryText').placeholder = example(date, slot);
   $('regenBtn').hidden = !entry;
@@ -400,7 +415,7 @@ async function markBusy(date) {
   if (!made.length) return;
   renderAll();
   navigator.vibrate?.(8);
-  toast(`已攒下 ${made.length} 份，之后可以兑现 💤`);
+  toast(`已攒下 ${made.length} 条`);
   await store.save(made);
   scheduleSync();
 }
@@ -440,7 +455,7 @@ const staticHostWithoutBackend = () => !apiBase() && /\.github\.io$/.test(locati
 async function api(path, body, timeoutMs = 120_000, method = body ? 'POST' : 'GET') {
   if (staticHostWithoutBackend()) throw Object.assign(new Error('还没有连接后端'), { code: 'no_backend' });
   const headers = { 'content-type': 'application/json' };
-  const code = ls.get('love.accessCode');
+  const code = accessCode.get();
   if (code) headers['x-access-code'] = code;
 
   let res;
@@ -453,7 +468,7 @@ async function api(path, body, timeoutMs = 120_000, method = body ? 'POST' : 'GE
     });
   } catch (err) {
     const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
-    throw Object.assign(new Error(timedOut ? '生成超时了，请重试' : '连不上后端，请检查网络后重试'), { code: 'network' });
+    throw Object.assign(new Error(timedOut ? '生成超时，请重试' : '无法连接后端'), { code: 'network' });
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -476,7 +491,7 @@ function downscale(dataUrl, size = 256) {
       ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
       resolve(canvas.toDataURL('image/jpeg', 0.88));
     };
-    img.onerror = () => reject(new Error('生成的图片无法显示，请重试'));
+    img.onerror = () => reject(new Error('图片无法解码，请重试'));
     img.src = dataUrl;
   });
 }
@@ -493,12 +508,13 @@ function findTwin(entry) {
 
 function failure(err) {
   if (err.code === 'not_configured' || err.code === 'no_backend') {
-    toastOnce('还没连上图像服务，先用内置图标 ✨');
+    toastOnce('图像服务未连接，使用内置图标');
     return { status: 'fallback' };
   }
-  if (err.status === 401 || err.code === 'access_code_required') {
-    toast('需要访问口令，请在设置里填写');
-    openSettings();
+  if (err.status === 401) {
+    reauth();
+  } else if (err.code === 'access_code_required') {
+    toast(err.message || '后端不允许访问');
   } else {
     toast(err.message || '图标生成失败');
   }
@@ -543,6 +559,126 @@ async function generate(id, { fresh = false } = {}) {
   if (patch.status === 'ready' && !patch.iconUploaded) scheduleSync(200); // upload the new icon for other devices
 }
 
+// ---------- access gate ----------
+// The backend sits behind a passcode. On a device that does not have it yet, the very first thing on screen is a
+// window asking for it; nothing behind it can be used until it is accepted.
+
+const accessCode = {
+  get: () => ls.get('love.accessCode') || ss.get('love.accessCode'),
+  // "remember" keeps it on this device; otherwise it only lives until the browser session ends
+  set(code, remember) {
+    this.clear();
+    (remember ? ls : ss).set('love.accessCode', code);
+  },
+  clear() {
+    ls.remove('love.accessCode');
+    ss.remove('love.accessCode');
+  },
+};
+
+// Checks a code against the backend without storing it: 'ok' | 'wrong' | 'blocked' | 'offline'
+async function verifyAccessCode(code) {
+  try {
+    const res = await fetch(`${apiBase()}/api/icons/get`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-access-code': code },
+      body: '{"keys":[]}', // the cheapest endpoint that is behind the passcode
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (res.ok) return { result: 'ok' };
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) return { result: 'wrong' };
+    if (res.status === 403) return { result: 'blocked', message: data.message };
+    return { result: 'offline' };
+  } catch {
+    return { result: 'offline' };
+  }
+}
+
+let gatePromise = null; // non-null while the window is open
+
+function showGate(message = '') {
+  gatePromise ??= new Promise((resolve) => {
+    const gate = $('gate');
+    const form = $('gateForm');
+    const input = $('gateCode');
+    const btn = $('gateBtn');
+    const skip = $('gateSkip');
+    const shell = document.querySelector('.app');
+    const say = (text, isError) => {
+      $('gateMsg').textContent = text;
+      gate.classList.toggle('err', Boolean(isError));
+    };
+    const close = (how) => {
+      gate.hidden = true;
+      shell.inert = false;
+      form.onsubmit = null;
+      skip.onclick = null;
+      gatePromise = null;
+      resolve(how);
+    };
+
+    say(message || '输入访问口令', Boolean(message));
+    input.value = '';
+    skip.hidden = true;
+    btn.disabled = false;
+    gate.hidden = false;
+    shell.inert = true;
+    setTimeout(() => input.focus(), 60);
+
+    form.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const code = input.value.trim();
+      if (!code) return;
+      btn.disabled = true;
+      btn.textContent = '验证中…';
+      const { result, message: serverMessage } = await verifyAccessCode(code);
+      btn.disabled = false;
+      btn.textContent = '进入';
+      if (result === 'ok') {
+        accessCode.set(code, $('gateRemember').checked);
+        return close('ok');
+      }
+      if (result === 'wrong') {
+        say('口令错误', true);
+        input.select();
+        gate.classList.remove('shake');
+        void gate.offsetWidth; // restart the animation
+        gate.classList.add('shake');
+      } else if (result === 'blocked') {
+        say(serverMessage || '后端不允许访问', true);
+      } else {
+        say('无法连接后端', true);
+        skip.hidden = false; // can't verify while offline: let the local diary stay usable
+      }
+    };
+    skip.onclick = () => close('skip');
+  });
+  return gatePromise;
+}
+
+// Startup: ask first, before anything is synced. Nothing to ask when there is no backend, when this device already
+// has a code (a changed code is caught by the first sync), or when the backend does not require one.
+async function ensureAccess() {
+  if (staticHostWithoutBackend() || accessCode.get()) return;
+  let health;
+  try {
+    health = await api('/api/health', null, 8000);
+  } catch {
+    return; // backend unreachable: stay local, syncing retries on its own
+  }
+  state.health = health;
+  updateBudget(health.budget);
+  if (health.accessRequired) await showGate();
+}
+
+// The stored code was rejected (it was changed on the server): forget it and ask again.
+async function reauth(message = '口令无效或已更改，请重新输入') {
+  if (gatePromise) return;
+  accessCode.clear();
+  if ((await showGate(message)) === 'ok') runSync();
+}
+
 // ---------- sync ----------
 // Offline-first: this device always works from its own IndexedDB copy. Changed entries are flagged `dirty`
 // and pushed; the server answers with everything newer than our cursor. Per entry the latest updatedAt wins.
@@ -567,12 +703,12 @@ function renderSyncStatus() {
   const n = dirtyCount();
   const time = sync.lastAt ? new Date(sync.lastAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
   const labels = {
-    idle: ['等待同步', '数据保存在这台设备，联网后自动同步'],
+    idle: ['等待同步', '联网后自动同步'],
     syncing: ['同步中…', '同步中…'],
-    ok: [`已同步 · ${time}`, '已同步到云端 · 换设备打开同一个网址、填同一个口令就能看到'],
-    offline: [n ? `离线，${n} 条待同步` : '离线', '暂时连不上后端，联网后会自动同步'],
-    auth: ['需要访问口令', '到设置 ⚙︎ 里填写访问口令，才能跨设备同步'],
-    off: ['仅保存在本设备（未连接后端）', '数据只保存在这台设备的浏览器里'],
+    ok: [`已同步 · ${time}`, '已同步'],
+    offline: [n ? `离线，${n} 条待同步` : '离线', '离线 · 联网后自动同步'],
+    auth: ['需要访问口令', '在设置中填写访问口令以同步'],
+    off: ['仅本机（未连接后端）', '仅本地存储'],
   };
   const [setting, footer] = labels[sync.status] ?? labels.idle;
   $('syncStatus').textContent = setting;
@@ -702,6 +838,7 @@ async function syncOnce() {
 }
 
 async function runSync() {
+  if (gatePromise) return; // wait until the passcode window is closed
   if (sync.running) {
     sync.again = true;
     return;
@@ -716,11 +853,14 @@ async function runSync() {
     } while (sync.again);
   } catch (err) {
     if (err.code === 'no_backend' || err.code === 'not_configured') outcome = 'off';
-    else if (err.status === 401 || err.code === 'access_code_required') {
+    else if (err.status === 401) {
+      outcome = 'auth';
+      reauth();
+    } else if (err.code === 'access_code_required') {
       outcome = 'auth';
       if (!sync.authWarned) {
         sync.authWarned = true;
-        toast(err.message || '需要访问口令才能同步');
+        toast(err.message || '后端不允许访问');
       }
     } else outcome = 'offline';
   } finally {
@@ -740,10 +880,10 @@ function updateBudget(b) {
   const banner = $('budgetBanner');
   banner.hidden = !b.overBudget;
   if (b.overBudget) {
-    banner.textContent = `⚠️ 图标生成已经花了约 ${usd(b.spentUsd)}，超过你设的 ${usd(b.warnAtUsd)} 提醒线。建议去 OpenAI 后台核对用量，需要的话先停掉后端。`;
+    banner.textContent = `图标生成已花费约 ${usd(b.spentUsd)}，超过 ${usd(b.warnAtUsd)} 提醒线。请到 OpenAI 后台核对用量。`;
     if (!warnedBudget) {
       warnedBudget = true;
-      toast(`⚠️ 图标花费已超过 ${usd(b.warnAtUsd)} 提醒线`);
+      toast(`花费已超过 ${usd(b.warnAtUsd)} 提醒线`);
     }
   }
   renderSpend();
@@ -751,7 +891,7 @@ function updateBudget(b) {
 
 function renderSpend() {
   const b = state.budget;
-  $('spendStatus').textContent = b ? `${usd(b.spentUsd)} / ${usd(b.warnAtUsd)} 提醒线` : '—';
+  $('spendStatus').textContent = b ? `${usd(b.spentUsd)} / ${usd(b.warnAtUsd)}` : '—';
 }
 
 // ---------- settings ----------
@@ -759,12 +899,12 @@ function renderSpend() {
 function renderApiStatus() {
   const h = state.health;
   let text = '检查中…';
-  if (h === null) text = '未连接（使用内置图标）';
-  else if (h) text = !h.imageConfigured ? '后端未配置图像 API' : h.accessRequired && !ls.get('love.accessCode') ? '需要访问口令' : `已连接 · ${h.model}`;
+  if (h === null) text = '未连接';
+  else if (h) text = !h.imageConfigured ? '后端未配置图像 API' : h.accessRequired && !accessCode.get() ? '需要访问口令' : `已连接 · ${h.model}`;
   $('apiStatus').textContent = text;
 
   let storage = h === null ? '—' : '检查中…';
-  if (h) storage = h.store === 'upstash' ? 'Upstash（持久）' : h.ephemeralRisk ? '⚠️ 临时磁盘，重启会丢数据' : '服务器本地文件';
+  if (h) storage = h.store === 'upstash' ? 'Upstash（持久）' : h.ephemeralRisk ? '临时磁盘，重启会丢数据（需接 Upstash）' : '服务器本地文件';
   $('storeStatus').textContent = storage;
 }
 
@@ -779,7 +919,7 @@ async function checkHealth(timeoutMs) {
 }
 
 function openSettings() {
-  $('accessCode').value = ls.get('love.accessCode');
+  $('accessCode').value = accessCode.get();
   state.health = undefined;
   renderApiStatus();
   openSheet($('settingsSheet'));
@@ -833,9 +973,9 @@ async function importData(file) {
     await store.save(list);
     renderAll();
     scheduleSync();
-    toast(`已导入 ${list.length} 份爱`);
+    toast(`已导入 ${list.length} 条`);
   } catch {
-    toast('这个文件读不了，请选择导出的 JSON');
+    toast('无法读取，请选择导出的 JSON 文件');
   }
 }
 
@@ -920,12 +1060,18 @@ function bind() {
   $('settingsBtn').addEventListener('click', openSettings);
   $('settingsDone').addEventListener('click', () => closeSheet($('settingsSheet')));
   $('accessCode').addEventListener('change', () => {
-    ls.set('love.accessCode', $('accessCode').value.trim());
+    const typed = $('accessCode').value.trim();
+    if (typed) accessCode.set(typed, true);
+    else accessCode.clear();
     sync.authWarned = false;
     renderApiStatus();
     runSync();
   });
   $('syncNowBtn').addEventListener('click', runSync);
+  $('lockBtn').addEventListener('click', () => {
+    closeSheet($('settingsSheet'));
+    reauth('已锁定，请输入访问口令');
+  });
   $('exportBtn').addEventListener('click', exportData);
   $('importFile').addEventListener('change', (ev) => {
     const file = ev.target.files[0];
@@ -933,7 +1079,7 @@ function bind() {
     if (file) importData(file);
   });
   $('clearBtn').addEventListener('click', (ev) =>
-    confirmTap(ev.currentTarget, '再点一次确认：所有设备都会清空', async () => {
+    confirmTap(ev.currentTarget, '再点一次：所有设备都会清空', async () => {
       // tombstones, not a wipe: otherwise the next sync would simply bring everything back
       const tombs = live().map(tombstone);
       tombs.forEach((t) => state.entries.set(t.id, t));
@@ -989,6 +1135,8 @@ async function init() {
   renderSyncStatus();
   bind();
   if (!store.persistent) toast('当前浏览器禁用了本地存储，刷新后记录会丢失');
+
+  await ensureAccess(); // may show the passcode window first; nothing below runs until it is closed
 
   // both double as a warm-up ping for hosts that sleep when idle
   checkHealth(60_000);

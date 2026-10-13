@@ -113,16 +113,16 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       if (!safeEqual(request.headers.get('x-access-code') ?? '', cfg.accessCode)) throw new HttpError(401, 'unauthorized', '需要正确的访问口令');
       return;
     }
-    if (!ctx.isLocal) throw new HttpError(403, 'access_code_required', '后端需要先设置 ACCESS_CODE，才能被远程访问');
+    if (!ctx.isLocal) throw new HttpError(403, 'access_code_required', '后端未设置 ACCESS_CODE，不允许远程访问');
   }
 
   // Rate limits live in the store (not in memory): a Worker may run in several places at once.
   async function checkRate(ip) {
     const now = new Date();
     const minute = Math.floor(now.getTime() / 60_000);
-    if ((await store.counters.hit(`ip:${ip}:${minute}`, 120)) > cfg.ratePerMin) throw new HttpError(429, 'rate_limited', '生成太频繁了，稍等一分钟');
+    if ((await store.counters.hit(`ip:${ip}:${minute}`, 120)) > cfg.ratePerMin) throw new HttpError(429, 'rate_limited', '请求过于频繁，请稍后再试');
     if ((await store.counters.hit(`daily:${now.toISOString().slice(0, 10)}`, 172_800)) > cfg.dailyLimit) {
-      throw new HttpError(429, 'daily_limit', '今天的生成额度用完啦，明天再来');
+      throw new HttpError(429, 'daily_limit', '今日生成额度已用完');
     }
   }
 
@@ -148,7 +148,7 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       });
     } catch (err) {
       console.error('[image] request failed:', err.message);
-      throw new HttpError(504, 'upstream_timeout', '图像服务没有响应，请稍后重试');
+      throw new HttpError(504, 'upstream_timeout', '图像服务无响应');
     }
 
     const raw = await upstream.text();
@@ -167,11 +167,11 @@ export function createApp({ env, store, ephemeralRisk = false }) {
     if (item?.b64_json) return { image: `data:${sniffMime(item.b64_json)};base64,${item.b64_json}`, usage: parsed.usage };
     if (item?.url) {
       const img = await fetch(item.url, { signal: AbortSignal.timeout(30_000) });
-      if (!img.ok) throw new HttpError(502, 'upstream_error', '下载生成的图片失败');
+      if (!img.ok) throw new HttpError(502, 'upstream_error', '图片下载失败');
       const type = img.headers.get('content-type')?.split(';')[0] || 'image/png';
       return { image: `data:${type};base64,${bytesToBase64(new Uint8Array(await img.arrayBuffer()))}`, usage: parsed.usage };
     }
-    throw new HttpError(502, 'upstream_error', '图像服务没有返回图片');
+    throw new HttpError(502, 'upstream_error', '图像服务未返回图片');
   }
 
   // Identical requests that arrive together share one paid generation. The job is registered synchronously,
@@ -234,18 +234,18 @@ export function createApp({ env, store, ephemeralRisk = false }) {
     if (iconRoute && method === 'PUT') {
       requireAccess(request, ctx);
       const { image } = await readJson(request, MAX_ICON_BYTES + 2048);
-      if (!isIconDataUrl(image)) throw new HttpError(400, 'bad_image', '图标格式不正确或太大');
+      if (!isIconDataUrl(image)) throw new HttpError(400, 'bad_image', '图标格式不正确或过大');
       await store.icons.put(iconRoute[1], image);
       return json(request, 200, { ok: true });
     }
 
     if (pathname === '/api/generate' && method === 'POST') {
       requireAccess(request, ctx);
-      if (!cfg.apiKey) throw new HttpError(503, 'not_configured', '后端还没有配置图像 API');
+      if (!cfg.apiKey) throw new HttpError(503, 'not_configured', '后端未配置图像 API');
 
       const { text, type, fresh } = await readJson(request);
       const clean = normalizeText(text);
-      if (!clean || clean.length > 80) throw new HttpError(400, 'bad_text', '请输入 1–80 字的爱的表达');
+      if (!clean || clean.length > 80) throw new HttpError(400, 'bad_text', '内容需为 1–80 字');
       if (!TYPE_IDS.includes(type)) throw new HttpError(400, 'bad_type', '未知的类型');
 
       // Reuse an icon that was already paid for, unless the user explicitly asked for a new one.
@@ -280,7 +280,7 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       return json(
         request,
         known ? err.status : 500,
-        { error: err.code || 'server_error', message: known ? err.message : '服务器出错了' },
+        { error: err.code || 'server_error', message: known ? err.message : '服务器错误' },
         err.status === 413 ? { connection: 'close' } : {},
       );
     }

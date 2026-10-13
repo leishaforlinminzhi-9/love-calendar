@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#FFF6EC">
+  <meta name="theme-color" content="#FAF4EA" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#17120E" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="爱的日历">
-  <title>爱的日历</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E💗%3C/text%3E%3C/svg%3E">
+  <meta name="apple-mobile-web-app-title" content="CALENDAR">
+  <title>CALENDAR</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%230A0A0C'/%3E%3Crect x='14' y='19' width='36' height='31' rx='6' fill='none' stroke='white' stroke-width='4'/%3E%3Cpath d='M14 30h36' stroke='white' stroke-width='4'/%3E%3Ccircle cx='41' cy='40' r='4' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -24,7 +25,7 @@
           <button class="icon-btn round" id="settingsBtn" aria-label="设置">⚙︎</button>
         </div>
       </div>
-      <h1 class="title">爱的日历</h1>
+      <h1 class="title">CALENDAR</h1>
       <p class="subtitle" id="monthLabel"></p>
     </header>
 
@@ -42,7 +43,7 @@
       </aside>
     </main>
 
-    <footer class="foot" id="foot">每天记下两份爱</footer>
+    <footer class="foot" id="foot">CALENDAR</footer>
   </div>
 
   <!-- Add / edit sheet -->
@@ -52,25 +53,25 @@
       <div class="sheet-head">
         <span class="icon big" id="previewIcon"></span>
         <div>
-          <h2 id="entryTitle">写下一份爱</h2>
+          <h2 id="entryTitle">新记录</h2>
           <p class="muted" id="entryDate"></p>
         </div>
       </div>
 
       <label class="field">
-        <span class="label">发生了什么爱的表达？</span>
+        <span class="label">内容</span>
         <textarea id="entryText" maxlength="60" rows="3" required></textarea>
         <span class="count" id="entryCount">0/60</span>
       </label>
 
       <div class="field">
-        <span class="label">类型 <span class="muted" id="typeNote">自动识别，也可以自己选</span></span>
-        <div class="chips" id="typeChips" role="radiogroup" aria-label="爱的类型"></div>
+        <span class="label">类型 <span class="muted" id="typeNote">自动识别</span></span>
+        <div class="chips" id="typeChips" role="radiogroup" aria-label="类型"></div>
       </div>
 
       <div class="sheet-actions">
-        <button type="submit" class="btn primary" id="saveBtn">保存并生成图标</button>
-        <button type="button" class="btn ghost" id="regenBtn" hidden>换一张新图标（会消耗额度）</button>
+        <button type="submit" class="btn primary" id="saveBtn">保存</button>
+        <button type="button" class="btn ghost" id="regenBtn" hidden>重新生成图标（消耗额度）</button>
         <div class="row">
           <button type="button" class="btn plain" id="cancelBtn">取消</button>
           <button type="button" class="btn plain danger" id="deleteBtn" hidden>删除</button>
@@ -86,18 +87,19 @@
       <h2 id="settingsTitle">设置</h2>
 
       <div class="group">
-        <div class="group-row"><span>图标生成服务</span><span class="muted" id="apiStatus">检查中…</span></div>
+        <div class="group-row"><span>图像服务</span><span class="muted" id="apiStatus">检查中…</span></div>
         <div class="group-row"><span>已花费</span><span class="muted" id="spendStatus">—</span></div>
-        <div class="group-row"><span>云端存储</span><span class="muted" id="storeStatus">—</span></div>
+        <div class="group-row"><span>存储</span><span class="muted" id="storeStatus">—</span></div>
         <label class="group-row">
           <span>访问口令</span>
-          <input id="accessCode" type="password" placeholder="没设置就留空" autocomplete="off">
+          <input id="accessCode" type="password" placeholder="未设置则留空" autocomplete="off">
         </label>
       </div>
 
       <div class="group">
-        <div class="group-row"><span>跨设备同步</span><span class="muted" id="syncStatus">等待同步</span></div>
+        <div class="group-row"><span>同步</span><span class="muted" id="syncStatus">等待同步</span></div>
         <button class="group-row action" id="syncNowBtn" type="button">立即同步</button>
+        <button class="group-row action" id="lockBtn" type="button">锁定 · 清除本机口令</button>
       </div>
 
       <div class="group">
@@ -106,13 +108,25 @@
       </div>
 
       <div class="group">
-        <button class="group-row action danger" id="clearBtn" type="button">清空所有记录（所有设备）</button>
+        <button class="group-row action danger" id="clearBtn" type="button">清空全部记录（所有设备）</button>
       </div>
 
       <div class="sheet-actions">
         <button type="button" class="btn primary" id="settingsDone">完成</button>
       </div>
     </div>
+  </div>
+
+  <!-- Passcode gate: shown first when this device has no valid access code -->
+  <div class="gate" id="gate" role="dialog" aria-modal="true" aria-labelledby="gateTitle" hidden>
+    <form class="gate-card" id="gateForm" autocomplete="on">
+      <h2 id="gateTitle">CALENDAR</h2>
+      <p class="gate-msg" id="gateMsg">输入访问口令</p>
+      <input id="gateCode" name="passcode" type="password" autocomplete="current-password" placeholder="访问口令" required>
+      <label class="gate-remember"><input type="checkbox" id="gateRemember" checked> 在此设备上记住</label>
+      <button type="submit" class="btn primary" id="gateBtn">进入</button>
+      <button type="button" class="btn plain" id="gateSkip" hidden>先在本机使用</button>
+    </form>
   </div>
 
   <div class="toast" id="toast" role="status"></div>

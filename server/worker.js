@@ -26,7 +26,7 @@ export default {
     } catch (err) {
       appPromise = null; // retry from scratch on the next request instead of caching a failure
       console.error('startup failed:', err.message);
-      return new Response(JSON.stringify({ error: 'misconfigured', message: '后端没有配置好，请检查 Upstash 和密钥设置' }), {
+      return new Response(JSON.stringify({ error: 'misconfigured', message: '后端配置不完整，请检查 Upstash 和密钥' }), {
         status: 500,
         headers: { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' },
       });
