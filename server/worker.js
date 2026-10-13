@@ -6,10 +6,11 @@ import { createUpstashStore } from './store-upstash.js';
 
 let appPromise = null;
 
+const REQUIRED = ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN'];
+
 async function build(env) {
-  if (!env.UPSTASH_REDIS_REST_URL || !env.UPSTASH_REDIS_REST_TOKEN) {
-    throw new Error('Missing UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN secrets');
-  }
+  const missing = REQUIRED.filter((name) => !env[name]);
+  if (missing.length) throw Object.assign(new Error(`missing ${missing.join(', ')}`), { missing });
   const store = createUpstashStore({ url: env.UPSTASH_REDIS_REST_URL, token: env.UPSTASH_REDIS_REST_TOKEN });
   const app = createApp({ env, store });
   await app.ready;
@@ -26,7 +27,11 @@ export default {
     } catch (err) {
       appPromise = null; // retry from scratch on the next request instead of caching a failure
       console.error('startup failed:', err.message);
-      return new Response(JSON.stringify({ error: 'misconfigured', message: '后端配置不完整，请检查 Upstash 和密钥' }), {
+      // Say WHAT is wrong, never the values: names of missing settings, or Upstash's own error text (it never contains our token).
+      const missing = err.missing ?? [];
+      const storeError = missing.length === 0 && String(err.message).startsWith('Upstash');
+      const message = missing.length ? `后端缺少配置：${missing.join('、')}` : storeError ? '后端连不上数据库，请检查 Upstash 的地址和令牌' : '后端启动失败';
+      return new Response(JSON.stringify({ error: 'misconfigured', message, ...(missing.length ? { missing } : {}), ...(storeError ? { detail: String(err.message).slice(0, 160) } : {}) }), {
         status: 500,
         headers: { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' },
       });

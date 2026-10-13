@@ -11,6 +11,8 @@ name = "love-calendar-api"
 main = "server/worker.js"
 compatibility_date = "2025-06-01"
 workers_dev = true
+# Deploys from git must not wipe settings added in the dashboard (secrets are never touched by a deploy anyway).
+keep_vars = true
 
 [vars]
 IMAGE_API_BASE = "https://api.openai.com/v1"
