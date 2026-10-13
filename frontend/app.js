@@ -452,26 +452,46 @@ function apiBase() {
 // GitHub Pages only serves static files: with no API_BASE configured there is no backend to call at all.
 const staticHostWithoutBackend = () => !apiBase() && /\.github\.io$/.test(location.hostname);
 
+// AbortSignal.timeout() is missing in older browsers (before Safari 16): without this fallback every request would
+// throw before it is even sent, and look like "can't reach the backend".
+function timeoutSignal(ms) {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), ms);
+  return controller.signal;
+}
+
+// What actually went wrong with the latest request, shown in Settings. "Can't reach the backend" alone cannot tell a
+// dead network from a blocked domain, a dropped long request or an old browser; the error type and the time it took can.
+function noteError(method, path, what, startedAt) {
+  const secs = ((performance.now() - startedAt) / 1000).toFixed(1);
+  const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  $('lastError').textContent = `${method} ${path} · ${what} · ${secs}s · ${time}`;
+}
+
 async function api(path, body, timeoutMs = 120_000, method = body ? 'POST' : 'GET') {
   if (staticHostWithoutBackend()) throw Object.assign(new Error('还没有连接后端'), { code: 'no_backend' });
   const headers = { 'content-type': 'application/json' };
   const code = accessCode.get();
   if (code) headers['x-access-code'] = code;
 
+  const startedAt = performance.now();
   let res;
   try {
     res = await fetch(apiBase() + path, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: timeoutSignal(timeoutMs),
     });
   } catch (err) {
+    noteError(method, path, `${err?.name ?? 'Error'}: ${String(err?.message ?? err).slice(0, 70)}`, startedAt);
     const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
     throw Object.assign(new Error(timedOut ? '生成超时，请重试' : '无法连接后端'), { code: 'network' });
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    noteError(method, path, `HTTP ${res.status}${data.error ? ' ' + data.error : ''}`, startedAt);
     const code = [404, 405].includes(res.status) && !data.error ? 'no_backend' : data.error;
     throw Object.assign(new Error(data.message || `请求失败 (${res.status})`), { code, status: res.status });
   }
@@ -583,7 +603,7 @@ async function verifyAccessCode(code) {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-access-code': code },
       body: '{"keys":[]}', // the cheapest endpoint that is behind the passcode
-      signal: AbortSignal.timeout(20_000),
+      signal: timeoutSignal(20_000),
     });
     if (res.ok) return { result: 'ok' };
     const data = await res.json().catch(() => ({}));

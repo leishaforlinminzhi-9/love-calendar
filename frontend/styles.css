@@ -483,3 +483,6 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 .gate-remember input { width: 18px; height: 18px; accent-color: var(--accent); }
 .gate.shake .gate-card { animation: shake 0.35s; }
 @keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+
+/* technical detail of the latest failed request: small and allowed to wrap */
+.last-error { max-width: 62%; text-align: right; font-family: var(--mono); font-size: 11px !important; line-height: 1.4; overflow-wrap: anywhere; }
