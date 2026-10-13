@@ -42,7 +42,7 @@
       </aside>
     </main>
 
-    <footer class="foot">每天记下两份爱 · 数据只保存在这台设备的浏览器里</footer>
+    <footer class="foot" id="foot">每天记下两份爱</footer>
   </div>
 
   <!-- Add / edit sheet -->
@@ -88,6 +88,7 @@
       <div class="group">
         <div class="group-row"><span>图标生成服务</span><span class="muted" id="apiStatus">检查中…</span></div>
         <div class="group-row"><span>已花费</span><span class="muted" id="spendStatus">—</span></div>
+        <div class="group-row"><span>云端存储</span><span class="muted" id="storeStatus">—</span></div>
         <label class="group-row">
           <span>访问口令</span>
           <input id="accessCode" type="password" placeholder="没设置就留空" autocomplete="off">
@@ -95,12 +96,17 @@
       </div>
 
       <div class="group">
-        <button class="group-row action" id="exportBtn" type="button">导出数据（换设备用）</button>
-        <label class="group-row action">导入数据<input id="importFile" type="file" accept="application/json" hidden></label>
+        <div class="group-row"><span>跨设备同步</span><span class="muted" id="syncStatus">等待同步</span></div>
+        <button class="group-row action" id="syncNowBtn" type="button">立即同步</button>
       </div>
 
       <div class="group">
-        <button class="group-row action danger" id="clearBtn" type="button">清空所有记录</button>
+        <button class="group-row action" id="exportBtn" type="button">导出备份</button>
+        <label class="group-row action">导入备份<input id="importFile" type="file" accept="application/json" hidden></label>
+      </div>
+
+      <div class="group">
+        <button class="group-row action danger" id="clearBtn" type="button">清空所有记录（所有设备）</button>
       </div>
 
       <div class="sheet-actions">

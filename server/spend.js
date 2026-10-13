@@ -1,6 +1,3 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 // USD per 1M tokens: [text input, image input, image output].
 // Source: OpenAI pricing page (checked 2026-10-13). Override with PRICE_PER_M="text,imageIn,imageOut".
 const RATES = {
@@ -26,21 +23,18 @@ function parseOverride(text) {
   return nums.length === 3 && nums.every((n) => Number.isFinite(n) && n >= 0) ? nums : null;
 }
 
-// Running total of what this server has spent on the image API, persisted across restarts.
-export function createLedger({ dir, warnAtUsd, fallbackCostUsd, priceOverride }) {
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, 'ledger.json');
+// Running total of what this server has spent on the image API. It lives in the durable store, so it
+// survives restarts (and, with Upstash, redeploys). Call init() once before use.
+export function createLedger({ store, warnAtUsd, fallbackCostUsd, priceOverride }) {
   const override = parseOverride(priceOverride);
-
   let data = { totalUsd: 0, generations: 0, cacheHits: 0, since: new Date().toISOString() };
-  try {
-    data = { ...data, ...JSON.parse(readFileSync(file, 'utf8')) };
-  } catch {}
+  let writes = Promise.resolve();
 
-  const save = () => {
-    const tmp = `${file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data));
-    renameSync(tmp, file);
+  const persist = () => {
+    const snapshot = { ...data };
+    writes = writes
+      .then(() => store.setJson('ledger', snapshot))
+      .catch((err) => console.error('[ledger] could not save:', err.message));
   };
 
   function costOf(model, usage) {
@@ -52,29 +46,31 @@ export function createLedger({ dir, warnAtUsd, fallbackCostUsd, priceOverride })
     return { usd: (textIn * rates[0] + imageIn * rates[1] + out * rates[2]) / 1e6, estimated: false };
   }
 
-  function status() {
-    return {
-      spentUsd: Math.round(data.totalUsd * 1e4) / 1e4,
-      warnAtUsd,
-      overBudget: data.totalUsd >= warnAtUsd,
-      generations: data.generations,
-      cacheHits: data.cacheHits,
-      since: data.since,
-    };
-  }
-
   return {
-    status,
+    async init() {
+      const saved = await store.getJson('ledger');
+      if (saved) data = { ...data, ...saved };
+    },
+    status() {
+      return {
+        spentUsd: Math.round(data.totalUsd * 1e4) / 1e4,
+        warnAtUsd,
+        overBudget: data.totalUsd >= warnAtUsd,
+        generations: data.generations,
+        cacheHits: data.cacheHits,
+        since: data.since,
+      };
+    },
     recordGeneration(model, usage) {
       const cost = costOf(model, usage);
       data.totalUsd += cost.usd;
       data.generations += 1;
-      save();
+      persist();
       return cost;
     },
     recordCacheHit() {
       data.cacheHits += 1;
-      save();
+      persist();
     },
   };
 }

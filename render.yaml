@@ -17,8 +17,13 @@ services:
       # Your GitHub Pages origin, e.g. https://yourname.github.io
       - key: ALLOWED_ORIGINS
         sync: false
-      # Optional but recommended: a passcode the frontend must send.
+      # Required: the passcode every device sends. It protects the diary and your image budget.
       - key: ACCESS_CODE
+        sync: false
+      # Durable storage for the synced diary (free tier at console.upstash.com). Render's own disk is wiped on restart.
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
       - key: DAILY_LIMIT
         value: "100"

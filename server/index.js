@@ -7,6 +7,8 @@ import { TYPE_IDS } from '../frontend/love-types.js';
 import { buildPrompt, normalizeText } from './prompt.js';
 import { createImageCache } from './cache.js';
 import { createLedger } from './spend.js';
+import { createStore } from './store.js';
+import { createSync, isIconDataUrl, ICON_KEY_RE, MAX_ICON_BYTES } from './sync.js';
 
 try {
   process.loadEnvFile(); // optional .env in the working directory
@@ -33,13 +35,25 @@ try {
   console.warn('IMAGE_PARAMS is not valid JSON, ignoring it.');
 }
 
+// Raw generated images (best-effort, only for reuse): plain files. Everything that must survive restarts
+// (diary entries, small icons, spend ledger) goes through `store`: files locally, Upstash Redis when configured.
 const cache = createImageCache(DATA_DIR);
+const store = createStore({ dir: DATA_DIR, env });
 const ledger = createLedger({
-  dir: DATA_DIR,
+  store,
   warnAtUsd: BUDGET_WARN_USD,
   fallbackCostUsd: Number(env.FALLBACK_COST_USD) || 0.02,
   priceOverride: env.PRICE_PER_M,
 });
+try {
+  await ledger.init(); // first real read from the store: a wrong Upstash URL/token fails here, at startup
+} catch (err) {
+  console.error(`\nCannot reach the ${store.driver} store: ${err.message}\nCheck UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN.\n`);
+  process.exit(1);
+}
+const syncer = createSync({ store, iconKeyFor: (type, text) => cache.key(type, text), typeIds: TYPE_IDS });
+// Render's free disk is wiped whenever the instance restarts, so a file store there silently loses the diary.
+const EPHEMERAL_RISK = Boolean(env.RENDER) && store.driver === 'file' && env.DATA_DIR_PERSISTENT !== '1';
 
 const FRONTEND_DIR = fileURLToPath(new URL('../frontend/', import.meta.url));
 const MIME = {
@@ -66,7 +80,7 @@ class HttpError extends Error {
 function corsHeaders(req) {
   const origin = req.headers.origin;
   const headers = {
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
     'access-control-allow-headers': 'content-type, x-access-code',
     'access-control-max-age': '86400',
     vary: 'Origin',
@@ -118,6 +132,17 @@ function checkAccess(req) {
   const want = Buffer.from(ACCESS_CODE);
   if (given.length !== want.length || !timingSafeEqual(given, want)) {
     throw new HttpError(401, 'unauthorized', '需要正确的访问口令');
+  }
+}
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+// The diary is private and image generation costs money, so remote callers always need the access code.
+// Without ACCESS_CODE the API only answers requests coming from this very machine.
+function requireAccess(req) {
+  if (ACCESS_CODE) return checkAccess(req);
+  if (req.headers['x-forwarded-for'] || !LOOPBACK.has(req.socket.remoteAddress)) {
+    throw new HttpError(403, 'access_code_required', '后端需要先设置 ACCESS_CODE，才能被远程访问');
   }
 }
 
@@ -236,12 +261,38 @@ async function handleApi(req, res, pathname) {
       imageConfigured: Boolean(IMAGE_API_KEY),
       accessRequired: Boolean(ACCESS_CODE),
       model: IMAGE_API_KEY ? IMAGE_MODEL : null,
+      store: store.driver,
+      ephemeralRisk: EPHEMERAL_RISK,
       budget: ledger.status(),
     });
   }
 
+  // ----- sync: diary entries (metadata) + their small icons -----
+
+  if (pathname === '/api/sync' && req.method === 'POST') {
+    requireAccess(req);
+    return sendJson(req, res, 200, await syncer.sync(await readJson(req, 512_000)));
+  }
+
+  if (pathname === '/api/icons/get' && req.method === 'POST') {
+    requireAccess(req);
+    const { keys } = await readJson(req, 8192);
+    const wanted = (Array.isArray(keys) ? keys : []).filter((k) => ICON_KEY_RE.test(k)).slice(0, 60);
+    const found = await Promise.all(wanted.map(async (k) => [k, await store.icons.get(k)]));
+    return sendJson(req, res, 200, { icons: Object.fromEntries(found.filter(([, image]) => image)) });
+  }
+
+  const iconRoute = pathname.match(/^\/api\/icons\/([a-f0-9]{64})$/);
+  if (iconRoute && req.method === 'PUT') {
+    requireAccess(req);
+    const { image } = await readJson(req, MAX_ICON_BYTES + 2048);
+    if (!isIconDataUrl(image)) throw new HttpError(400, 'bad_image', '图标格式不正确或太大');
+    await store.icons.put(iconRoute[1], image);
+    return sendJson(req, res, 200, { ok: true });
+  }
+
   if (pathname === '/api/generate' && req.method === 'POST') {
-    checkAccess(req);
+    requireAccess(req);
     if (!IMAGE_API_KEY) throw new HttpError(503, 'not_configured', '后端还没有配置图像 API');
 
     const { text, type, fresh } = await readJson(req);
@@ -252,15 +303,17 @@ async function handleApi(req, res, pathname) {
     // Reuse an icon that was already paid for, unless the user explicitly asked for a new one.
     const key = cache.key(type, clean);
     if (fresh !== true) {
-      const image = cache.get(key);
+      // the small icon in the durable store (uploaded by a browser) is preferred; the raw file cache is a fallback
+      const small = await store.icons.get(key).catch(() => null);
+      const image = small ?? cache.get(key);
       if (image) {
         ledger.recordCacheHit();
-        return sendJson(req, res, 200, { image, cached: true, budget: ledger.status() });
+        return sendJson(req, res, 200, { image, cached: true, small: Boolean(small), iconKey: key, budget: ledger.status() });
       }
     }
 
     const { image, prompt } = await generateOnce(req, key, type, clean);
-    return sendJson(req, res, 200, { image, prompt, cached: false, budget: ledger.status() });
+    return sendJson(req, res, 200, { image, prompt, cached: false, small: false, iconKey: key, budget: ledger.status() });
   }
 
   throw new HttpError(404, 'not_found', '接口不存在');
@@ -321,4 +374,8 @@ server.listen(PORT, () => {
       ? `Image API: ${IMAGE_API_BASE} (${IMAGE_MODEL}) | spent so far $${b.spentUsd.toFixed(4)} of $${b.warnAtUsd} warn line`
       : 'Image API: not configured (set IMAGE_API_KEY) – the app will use built-in icons.',
   );
+  console.log(`Sync storage: ${store.driver}${ACCESS_CODE ? '' : ' | no ACCESS_CODE: API only answers this machine'}`);
+  if (EPHEMERAL_RISK) {
+    console.warn('\n!!! Running on Render with a file store: the diary is wiped on every restart. Set UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN. !!!\n');
+  }
 });

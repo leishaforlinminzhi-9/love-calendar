@@ -48,7 +48,15 @@ const state = {
 const popKeys = new Set(); // entries whose icon just arrived (play the pop animation once)
 const inflight = new Map(); // id -> token of the newest generation request
 
-const entriesOn = (date) => Array.from({ length: SLOTS }, (_, i) => state.entries.get(`${date}_${i}`));
+// Deleted entries stay in the map as tombstones so the deletion can sync to other devices.
+const live = () => [...state.entries.values()].filter((e) => !e.deleted);
+const liveEntry = (id) => {
+  const e = state.entries.get(id);
+  return e && !e.deleted ? e : null;
+};
+const entriesOn = (date) => Array.from({ length: SLOTS }, (_, i) => liveEntry(`${date}_${i}`) ?? undefined);
+// Strictly increasing per entry, so a fast second edit (or a clock that went back) still wins the merge.
+const nextStamp = (id) => Math.max(Date.now(), (state.entries.get(id)?.updatedAt ?? 0) + 1);
 
 // ---------- toast ----------
 
@@ -139,7 +147,7 @@ function renderDay() {
 }
 
 function streak() {
-  const days = new Set([...state.entries.values()].map((e) => e.date));
+  const days = new Set(live().map((e) => e.date));
   const d = new Date();
   if (!days.has(fmt(d))) d.setDate(d.getDate() - 1);
   let n = 0;
@@ -155,7 +163,7 @@ function renderStats() {
   const prefix = `${y}-${pad(m + 1)}-`;
   const counts = new Map();
   let total = 0;
-  for (const e of state.entries.values()) {
+  for (const e of live()) {
     if (!e.date.startsWith(prefix)) continue;
     counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
     total += 1;
@@ -258,7 +266,7 @@ function syncEntryForm() {
 }
 
 function openEntry(date, slot) {
-  const entry = state.entries.get(`${date}_${slot}`) ?? null;
+  const entry = liveEntry(`${date}_${slot}`);
   const { m, d, y } = parse(date);
   draft = { date, slot, entry, type: entry?.type ?? 'other', locked: Boolean(entry) };
 
@@ -280,13 +288,18 @@ async function commitEntry({ regen = false } = {}) {
   const { date, slot, entry: prev, type } = draft;
   const id = `${date}_${slot}`;
   const changed = !prev || prev.text !== text || prev.type !== type;
-  const now = Date.now();
+  const old = state.entries.get(id); // may be a tombstone of an earlier deletion
   const entry = {
     id, date, slot, text, type,
     icon: changed ? null : prev.icon ?? null,
+    iconKey: changed ? null : prev.iconKey ?? null,
+    iconUploaded: changed ? false : prev.iconUploaded ?? false,
     status: prev?.status ?? 'fallback',
-    createdAt: prev?.createdAt ?? now,
-    updatedAt: now,
+    deleted: false,
+    dirty: true,
+    rev: old?.rev,
+    createdAt: prev?.createdAt ?? old?.createdAt ?? Date.now(),
+    updatedAt: nextStamp(id),
   };
   const needsIcon = changed || regen;
   if (needsIcon) entry.status = 'pending';
@@ -297,18 +310,32 @@ async function commitEntry({ regen = false } = {}) {
   renderAll();
   navigator.vibrate?.(8);
   await store.save(entry);
+  scheduleSync();
   // an explicit "new icon" request skips the reuse cache; plain edits and retries reuse paid-for images
   if (needsIcon) generate(id, { fresh: regen });
+}
+
+function tombstone(e) {
+  return {
+    id: e.id, date: e.date, slot: e.slot, text: '', type: e.type,
+    icon: null, iconKey: null, iconUploaded: false, status: 'fallback',
+    deleted: true, dirty: true, rev: e.rev, createdAt: e.createdAt,
+    updatedAt: nextStamp(e.id),
+  };
 }
 
 async function deleteEntry() {
   const { date, slot } = draft;
   const id = `${date}_${slot}`;
-  state.entries.delete(id);
+  const prev = state.entries.get(id);
+  if (!prev) return;
+  const tomb = tombstone(prev);
+  state.entries.set(id, tomb);
   inflight.delete(id);
   closeSheet($('entrySheet'));
   renderAll();
-  await store.remove(id);
+  await store.save(tomb);
+  scheduleSync();
 }
 
 // ---------- icon generation ----------
@@ -317,7 +344,7 @@ function apiBase() {
   return String(window.LOVE_CONFIG?.API_BASE ?? '').replace(/\/+$/, '');
 }
 
-async function api(path, body, timeoutMs = 120_000) {
+async function api(path, body, timeoutMs = 120_000, method = body ? 'POST' : 'GET') {
   const headers = { 'content-type': 'application/json' };
   const code = ls.get('love.accessCode');
   if (code) headers['x-access-code'] = code;
@@ -325,7 +352,7 @@ async function api(path, body, timeoutMs = 120_000) {
   let res;
   try {
     res = await fetch(apiBase() + path, {
-      method: body ? 'POST' : 'GET',
+      method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(timeoutMs),
@@ -365,7 +392,7 @@ const norm = (s) => s.normalize('NFKC').replace(/\s+/g, ' ').trim();
 function findTwin(entry) {
   const text = norm(entry.text);
   for (const e of state.entries.values()) {
-    if (e.id !== entry.id && e.icon && e.status === 'ready' && e.type === entry.type && norm(e.text) === text) return e;
+    if (e.id !== entry.id && !e.deleted && e.icon && e.status === 'ready' && e.type === entry.type && norm(e.text) === text) return e;
   }
   return null;
 }
@@ -375,7 +402,7 @@ function failure(err) {
     toastOnce('还没连上图像服务，先用内置图标 ✨');
     return { status: 'fallback' };
   }
-  if (err.status === 401) {
+  if (err.status === 401 || err.code === 'access_code_required') {
     toast('需要访问口令，请在设置里填写');
     openSettings();
   } else {
@@ -395,12 +422,18 @@ async function generate(id, { fresh = false } = {}) {
 
   let patch;
   if (twin) {
-    patch = { icon: twin.icon, status: 'ready' };
+    patch = { icon: twin.icon, iconKey: twin.iconKey ?? null, iconUploaded: twin.iconUploaded ?? false, status: 'ready' };
   } else {
     try {
       const res = await api('/api/generate', { text: current.text, type: current.type, fresh });
       updateBudget(res.budget);
-      patch = { icon: await downscale(res.image), status: 'ready' };
+      // `small` = the server handed back an icon that is already downscaled (and already stored there)
+      patch = {
+        icon: res.small ? res.image : await downscale(res.image),
+        iconKey: res.iconKey ?? null,
+        iconUploaded: res.small === true,
+        status: 'ready',
+      };
     } catch (err) {
       patch = failure(err);
     }
@@ -409,15 +442,200 @@ async function generate(id, { fresh = false } = {}) {
   if (inflight.get(id) !== token) return; // edited again or deleted meanwhile
   inflight.delete(id);
   const entry = state.entries.get(id);
-  Object.assign(entry, patch, { updatedAt: Date.now() });
+  Object.assign(entry, patch); // an icon is derived data: it does not bump updatedAt or mark the entry dirty
   if (patch.status === 'ready') popKeys.add(id);
   renderAll();
   await store.save(entry);
+  if (patch.status === 'ready' && !patch.iconUploaded) scheduleSync(200); // upload the new icon for other devices
+}
+
+// ---------- sync ----------
+// Offline-first: this device always works from its own IndexedDB copy. Changed entries are flagged `dirty`
+// and pushed; the server answers with everything newer than our cursor. Per entry the latest updatedAt wins.
+
+const syncMeta = {
+  key: () => `love.sync:${apiBase()}`,
+  load() {
+    try {
+      return JSON.parse(ls.get(this.key())) ?? {};
+    } catch {
+      return {};
+    }
+  },
+  save(value) {
+    ls.set(this.key(), JSON.stringify(value));
+  },
+};
+const sync = { status: 'idle', lastAt: 0, running: false, again: false, timer: 0, missUntil: new Map(), authWarned: false };
+const dirtyCount = () => [...state.entries.values()].filter((e) => e.dirty).length;
+
+function renderSyncStatus() {
+  const n = dirtyCount();
+  const time = sync.lastAt ? new Date(sync.lastAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
+  const labels = {
+    idle: ['等待同步', '数据保存在这台设备，联网后自动同步'],
+    syncing: ['同步中…', '同步中…'],
+    ok: [`已同步 · ${time}`, '已同步到云端 · 换设备打开同一个网址、填同一个口令就能看到'],
+    offline: [n ? `离线，${n} 条待同步` : '离线', '暂时连不上后端，联网后会自动同步'],
+    auth: ['需要访问口令', '到设置 ⚙︎ 里填写访问口令，才能跨设备同步'],
+    off: ['仅保存在本设备（未连接后端）', '数据只保存在这台设备的浏览器里'],
+  };
+  const [setting, footer] = labels[sync.status] ?? labels.idle;
+  $('syncStatus').textContent = setting;
+  $('foot').textContent = footer;
+}
+
+function setSyncStatus(status) {
+  sync.status = status;
+  if (status === 'ok') sync.lastAt = Date.now();
+  renderSyncStatus();
+}
+
+function scheduleSync(delay = 800) {
+  clearTimeout(sync.timer);
+  sync.timer = setTimeout(runSync, delay);
+}
+
+// Offer the server our full copy: entries *and* their icons (a reset server has lost both).
+async function markAllDirty() {
+  const all = [...state.entries.values()];
+  all.forEach((e) => {
+    e.dirty = true;
+    if (e.icon) e.iconUploaded = false;
+  });
+  await store.save(all);
+}
+
+const wire = (e) => ({ date: e.date, slot: e.slot, text: e.text, type: e.type, deleted: e.deleted === true, createdAt: e.createdAt, updatedAt: e.updatedAt });
+
+function applyRemote(r, touched) {
+  const local = state.entries.get(r.id);
+  if (local && local.updatedAt > r.updatedAt) return; // our edit is newer: it is (or will be) pushed
+  if (local && local.updatedAt === r.updatedAt) {
+    local.rev = r.rev;
+    local.iconKey = r.iconKey ?? local.iconKey ?? null;
+    touched.set(local.id, local);
+    return;
+  }
+
+  // the other device's version is newer (or this entry is new here)
+  const contentChanged = !local || local.text !== r.text || local.type !== r.type || local.deleted !== (r.deleted === true);
+  const merged = {
+    ...(local ?? {}),
+    id: r.id, date: r.date, slot: r.slot, text: r.text, type: r.type,
+    deleted: r.deleted === true, createdAt: r.createdAt, updatedAt: r.updatedAt, rev: r.rev,
+    iconKey: r.iconKey ?? null, dirty: false,
+  };
+  if (contentChanged) {
+    inflight.delete(r.id); // a generation for the old text is no longer wanted
+    Object.assign(merged, { icon: null, iconUploaded: true, status: 'fallback' }); // the icon is fetched below
+  }
+  state.entries.set(r.id, merged);
+  touched.set(r.id, merged);
+}
+
+async function syncIcons() {
+  const changed = new Map();
+  const rethrow = (err) => { if (err.code === 'network' || err.status === 401 || err.code === 'access_code_required') throw err; };
+
+  // 1. give the server the small icons it does not have yet (so other devices can show them)
+  for (const e of live()) {
+    if (!(e.icon && e.iconKey && !e.iconUploaded && e.status === 'ready')) continue;
+    try {
+      await api(`/api/icons/${e.iconKey}`, { image: e.icon }, 30_000, 'PUT');
+      e.iconUploaded = true;
+      changed.set(e.id, e);
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  // 2. fetch icons that other devices (or the server) already have
+  const need = live().filter((e) => !e.icon && e.iconKey && e.status !== 'pending' && !(sync.missUntil.get(e.iconKey) > Date.now()));
+  const keys = [...new Set(need.map((e) => e.iconKey))];
+  for (let i = 0; i < keys.length; i += 40) {
+    const chunk = keys.slice(i, i + 40);
+    const { icons } = await api('/api/icons/get', { keys: chunk }, 30_000);
+    for (const k of chunk) if (!icons[k]) sync.missUntil.set(k, Date.now() + 5 * 60_000);
+    for (const e of need) {
+      if (!icons[e.iconKey]) continue;
+      Object.assign(e, { icon: icons[e.iconKey], iconUploaded: true, status: 'ready' });
+      popKeys.add(e.id);
+      changed.set(e.id, e);
+    }
+  }
+
+  if (changed.size) {
+    await store.save([...changed.values()]);
+    renderAll();
+  }
+}
+
+async function syncOnce() {
+  let meta = syncMeta.load();
+  if (!meta.epoch) {
+    await markAllDirty(); // first time with this backend: offer everything we have
+    meta = { cursor: 0, epoch: null };
+  }
+
+  const sent = [...state.entries.values()].filter((e) => e.dirty);
+  const res = await api('/api/sync', { since: meta.cursor ?? 0, epoch: meta.epoch ?? null, changes: sent.map(wire) }, 60_000);
+
+  const touched = new Map();
+  for (const s of sent) {
+    const cur = state.entries.get(s.id);
+    if (cur && cur.updatedAt === s.updatedAt) { // not edited again while the request was in flight
+      cur.dirty = false;
+      touched.set(cur.id, cur);
+    }
+  }
+  for (const remote of res.entries) applyRemote(remote, touched);
+
+  if (res.resync) {
+    // the server's data was reset since we last talked to it: push our full copy again
+    syncMeta.save({ cursor: 0, epoch: res.epoch });
+    await markAllDirty();
+    sync.again = true;
+  } else {
+    syncMeta.save({ cursor: res.cursor, epoch: res.epoch });
+  }
+
+  if (touched.size) await store.save([...touched.values()]);
+  renderAll();
+  await syncIcons();
+}
+
+async function runSync() {
+  if (sync.running) {
+    sync.again = true;
+    return;
+  }
+  sync.running = true;
+  setSyncStatus('syncing');
+  let outcome = 'ok';
+  try {
+    do {
+      sync.again = false;
+      await syncOnce();
+    } while (sync.again);
+  } catch (err) {
+    if (err.code === 'no_backend' || err.code === 'not_configured') outcome = 'off';
+    else if (err.status === 401 || err.code === 'access_code_required') {
+      outcome = 'auth';
+      if (!sync.authWarned) {
+        sync.authWarned = true;
+        toast(err.message || '需要访问口令才能同步');
+      }
+    } else outcome = 'offline';
+  } finally {
+    sync.running = false;
+  }
+  setSyncStatus(outcome);
 }
 
 // ---------- budget ----------
 
-const usd = (n) => `$${n.toFixed(n < 1 ? 3 : 2)}`;
+const usd =(n) => `$${n.toFixed(n < 1 ? 3 : 2)}`;
 let warnedBudget = false;
 
 function updateBudget(b) {
@@ -448,6 +666,10 @@ function renderApiStatus() {
   if (h === null) text = '未连接（使用内置图标）';
   else if (h) text = !h.imageConfigured ? '后端未配置图像 API' : h.accessRequired && !ls.get('love.accessCode') ? '需要访问口令' : `已连接 · ${h.model}`;
   $('apiStatus').textContent = text;
+
+  let storage = h === null ? '—' : '检查中…';
+  if (h) storage = h.store === 'upstash' ? 'Upstash（持久）' : h.ephemeralRisk ? '⚠️ 临时磁盘，重启会丢数据' : '服务器本地文件';
+  $('storeStatus').textContent = storage;
 }
 
 async function checkHealth(timeoutMs) {
@@ -469,7 +691,8 @@ function openSettings() {
 }
 
 function exportData() {
-  const payload = JSON.stringify({ app: 'love-calendar', version: 1, exportedAt: new Date().toISOString(), entries: [...state.entries.values()] });
+  const entries = live().map(({ id, date, slot, text, type, icon, createdAt, updatedAt }) => ({ id, date, slot, text, type, icon, createdAt, updatedAt }));
+  const payload = JSON.stringify({ app: 'love-calendar', version: 1, exportedAt: new Date().toISOString(), entries });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
   a.download = `love-calendar-${todayKey()}.json`;
@@ -488,9 +711,13 @@ function sanitizeEntry(raw) {
     text: raw.text.trim().slice(0, 60),
     type: TYPE_IDS.includes(raw.type) ? raw.type : 'other',
     icon: okIcon ? raw.icon : null,
+    iconKey: null, // the server assigns it on the next sync; the icon is then uploaded from here
+    iconUploaded: false,
     status: okIcon ? 'ready' : 'fallback',
+    deleted: false,
+    dirty: true,
     createdAt: Number(raw.createdAt) || Date.now(),
-    updatedAt: Number(raw.updatedAt) || Date.now(),
+    updatedAt: Date.now(),
   };
 }
 
@@ -499,9 +726,13 @@ async function importData(file) {
     const json = JSON.parse(await file.text());
     const list = (Array.isArray(json?.entries) ? json.entries : []).map(sanitizeEntry).filter(Boolean);
     if (!list.length) return toast('文件里没有可导入的记录');
-    list.forEach((e) => state.entries.set(e.id, e));
+    list.forEach((e) => {
+      e.updatedAt = nextStamp(e.id); // an import is a deliberate act: it wins over what is there, on every device
+      state.entries.set(e.id, e);
+    });
     await store.save(list);
     renderAll();
+    scheduleSync();
     toast(`已导入 ${list.length} 份爱`);
   } catch {
     toast('这个文件读不了，请选择导出的 JSON');
@@ -581,8 +812,11 @@ function bind() {
   $('settingsDone').addEventListener('click', () => closeSheet($('settingsSheet')));
   $('accessCode').addEventListener('change', () => {
     ls.set('love.accessCode', $('accessCode').value.trim());
+    sync.authWarned = false;
     renderApiStatus();
+    runSync();
   });
+  $('syncNowBtn').addEventListener('click', runSync);
   $('exportBtn').addEventListener('click', exportData);
   $('importFile').addEventListener('change', (ev) => {
     const file = ev.target.files[0];
@@ -590,11 +824,14 @@ function bind() {
     if (file) importData(file);
   });
   $('clearBtn').addEventListener('click', (ev) =>
-    confirmTap(ev.currentTarget, '再点一次确认清空', async () => {
-      state.entries.clear();
+    confirmTap(ev.currentTarget, '再点一次确认：所有设备都会清空', async () => {
+      // tombstones, not a wipe: otherwise the next sync would simply bring everything back
+      const tombs = live().map(tombstone);
+      tombs.forEach((t) => state.entries.set(t.id, t));
       inflight.clear();
-      await store.clear();
+      await store.save(tombs);
       renderAll();
+      scheduleSync();
       toast('已清空');
     }),
   );
@@ -605,14 +842,21 @@ function bind() {
     if (ev.key === 'Escape') document.querySelectorAll('.backdrop.open').forEach(closeSheet);
   });
 
-  // the date may roll over while the tab stays open
+  // the date may roll over while the tab stays open; coming back to the tab is also a good moment to sync
   let lastDay = todayKey();
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && todayKey() !== lastDay) {
+    if (document.visibilityState !== 'visible') return;
+    if (todayKey() !== lastDay) {
       lastDay = todayKey();
       renderAll();
     }
+    runSync();
   });
+  window.addEventListener('online', runSync);
+  // pick up what other devices wrote; skip while there is no backend / no passcode, a retry won't help
+  setInterval(() => {
+    if (document.visibilityState === 'visible' && sync.status !== 'off' && sync.status !== 'auth') runSync();
+  }, 60_000);
 }
 
 // ---------- init ----------
@@ -633,11 +877,13 @@ async function init() {
     state.entries.set(e.id, e);
   }
   renderAll();
+  renderSyncStatus();
   bind();
   if (!store.persistent) toast('当前浏览器禁用了本地存储，刷新后记录会丢失');
 
-  // doubles as a warm-up ping for hosts that sleep when idle
+  // both double as a warm-up ping for hosts that sleep when idle
   checkHealth(60_000);
+  runSync();
 }
 
 init();
