@@ -1,0 +1,26 @@
+# Render Blueprint: deploys server/ (which also serves frontend/) straight from GitHub.
+services:
+  - type: web
+    name: love-calendar-api
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: IMAGE_API_KEY
+        sync: false
+      - key: IMAGE_API_BASE
+        value: https://api.openai.com/v1
+      - key: IMAGE_MODEL
+        value: gpt-image-2.5-flare
+      # Your GitHub Pages origin, e.g. https://yourname.github.io
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # Optional but recommended: a passcode the frontend must send.
+      - key: ACCESS_CODE
+        sync: false
+      - key: DAILY_LIMIT
+        value: "100"
+      - key: BUDGET_WARN_USD
+        value: "50"

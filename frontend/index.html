@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#FFF6EC">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="爱的日历">
+  <title>爱的日历</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E💗%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="top-row">
+        <div class="month-nav" role="group" aria-label="切换月份">
+          <button class="icon-btn" id="prevMonth" aria-label="上个月">‹</button>
+          <button class="icon-btn" id="nextMonth" aria-label="下个月">›</button>
+        </div>
+        <div class="top-actions">
+          <button class="pill" id="todayBtn">今天</button>
+          <button class="icon-btn round" id="settingsBtn" aria-label="设置">⚙︎</button>
+        </div>
+      </div>
+      <h1 class="title">爱的日历</h1>
+      <p class="subtitle" id="monthLabel"></p>
+    </header>
+
+    <div class="banner" id="budgetBanner" role="alert" hidden></div>
+
+    <main class="layout">
+      <section class="card cal" aria-label="日历">
+        <div class="grid dow" id="dow"></div>
+        <div class="grid days" id="days"></div>
+      </section>
+
+      <aside class="side">
+        <section class="card day" id="dayCard" aria-live="polite"></section>
+        <section class="card stats" id="statsCard"></section>
+      </aside>
+    </main>
+
+    <footer class="foot">每天记下两份爱 · 数据只保存在这台设备的浏览器里</footer>
+  </div>
+
+  <!-- Add / edit sheet -->
+  <div class="backdrop" id="entrySheet" aria-hidden="true">
+    <form class="sheet" id="entryForm" role="dialog" aria-modal="true" aria-labelledby="entryTitle" autocomplete="off">
+      <div class="grabber"></div>
+      <div class="sheet-head">
+        <span class="icon big" id="previewIcon"></span>
+        <div>
+          <h2 id="entryTitle">写下一份爱</h2>
+          <p class="muted" id="entryDate"></p>
+        </div>
+      </div>
+
+      <label class="field">
+        <span class="label">发生了什么爱的表达？</span>
+        <textarea id="entryText" maxlength="60" rows="3" required></textarea>
+        <span class="count" id="entryCount">0/60</span>
+      </label>
+
+      <div class="field">
+        <span class="label">类型 <span class="muted" id="typeNote">自动识别，也可以自己选</span></span>
+        <div class="chips" id="typeChips" role="radiogroup" aria-label="爱的类型"></div>
+      </div>
+
+      <div class="sheet-actions">
+        <button type="submit" class="btn primary" id="saveBtn">保存并生成图标</button>
+        <button type="button" class="btn ghost" id="regenBtn" hidden>换一张新图标（会消耗额度）</button>
+        <div class="row">
+          <button type="button" class="btn plain" id="cancelBtn">取消</button>
+          <button type="button" class="btn plain danger" id="deleteBtn" hidden>删除</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <!-- Settings sheet -->
+  <div class="backdrop" id="settingsSheet" aria-hidden="true">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="grabber"></div>
+      <h2 id="settingsTitle">设置</h2>
+
+      <div class="group">
+        <div class="group-row"><span>图标生成服务</span><span class="muted" id="apiStatus">检查中…</span></div>
+        <div class="group-row"><span>已花费</span><span class="muted" id="spendStatus">—</span></div>
+        <label class="group-row">
+          <span>访问口令</span>
+          <input id="accessCode" type="password" placeholder="没设置就留空" autocomplete="off">
+        </label>
+      </div>
+
+      <div class="group">
+        <button class="group-row action" id="exportBtn" type="button">导出数据（换设备用）</button>
+        <label class="group-row action">导入数据<input id="importFile" type="file" accept="application/json" hidden></label>
+      </div>
+
+      <div class="group">
+        <button class="group-row action danger" id="clearBtn" type="button">清空所有记录</button>
+      </div>
+
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" id="settingsDone">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
