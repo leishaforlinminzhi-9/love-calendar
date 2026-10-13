@@ -344,7 +344,11 @@ function apiBase() {
   return String(window.LOVE_CONFIG?.API_BASE ?? '').replace(/\/+$/, '');
 }
 
+// GitHub Pages only serves static files: with no API_BASE configured there is no backend to call at all.
+const staticHostWithoutBackend = () => !apiBase() && /\.github\.io$/.test(location.hostname);
+
 async function api(path, body, timeoutMs = 120_000, method = body ? 'POST' : 'GET') {
+  if (staticHostWithoutBackend()) throw Object.assign(new Error('还没有连接后端'), { code: 'no_backend' });
   const headers = { 'content-type': 'application/json' };
   const code = ls.get('love.accessCode');
   if (code) headers['x-access-code'] = code;
