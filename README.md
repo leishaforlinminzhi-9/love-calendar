@@ -129,6 +129,8 @@ Pages 免费版需要**公开仓库**。`.env` 已在 `.gitignore` 里，密钥�
    默认是**开放访问**（`wrangler.toml` 里 `OPEN_ACCESS = "true"`）：不用口令。想加口令：把它改成 `"false"`，再运行 `npx wrangler@4 secret put ACCESS_CODE` 设一个口令。
 4. 验证：`curl https://你的后端地址/api/health`，应该看到 `"store":"upstash"` 和 `"imageConfigured":true`。
 
+**后端固定在美国东部运行**（`wrangler.toml` 里的 `[placement] region = "aws:us-east-1"`），而不是在每个访问者附近运行。原因：OpenAI 不服务某些国家和地区（比如中国大陆、香港、澳门、俄罗斯等），Cloudflare Workers 默认在离访问者最近的机房执行，访问者在这些地方时后端就会在当地机房去调用 OpenAI，被拒绝并报 `Country, region, or territory not supported`。固定地区之后，不管朋友在哪个国家，调用 OpenAI 的位置都是同一个受支持的地区。验证方法：`curl -i https://你的后端地址/api/health`，响应头里有 `cf-placement: remote-IAD` 就说明在美国弗吉尼亚运行。代价是亚洲、欧洲的访问者每次请求会多约 0.3–0.6 秒。
+
 `wrangler.toml` 里已经写好了不涉及密钥的配置（模型、`ALLOWED_ORIGINS` 等）。免费版每个请求最多只能对外发 50 次请求，后端的存储读写已经做了批量化（一次同步 700 条记录只需要 3 次）。
 
 ### 2B. 部署后端：Render（备选）
