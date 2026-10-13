@@ -1,0 +1,21 @@
+# Cloudflare Workers deployment of the backend (free tier, never sleeps). The frontend stays on GitHub Pages.
+# Deploy:  npx wrangler@4 login   then   npx wrangler@4 deploy
+#
+# Secrets are NOT stored here. Set each one once (it asks you to paste the value):
+#   npx wrangler@4 secret put IMAGE_API_KEY
+#   npx wrangler@4 secret put ACCESS_CODE
+#   npx wrangler@4 secret put UPSTASH_REDIS_REST_URL
+#   npx wrangler@4 secret put UPSTASH_REDIS_REST_TOKEN
+
+name = "love-calendar-api"
+main = "server/worker.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+[vars]
+IMAGE_API_BASE = "https://api.openai.com/v1"
+IMAGE_MODEL = "gpt-image-2.5-flare"
+# The browser origin allowed to call this API: your GitHub Pages site (scheme + host only, no path).
+ALLOWED_ORIGINS = "https://leishaforlinminzhi-9.github.io"
+DAILY_LIMIT = "100"
+BUDGET_WARN_USD = "50"

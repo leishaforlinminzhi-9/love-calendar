@@ -391,3 +391,48 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- banking: "too busy, pay it back later" ---------- */
+
+.icon.busy { background: linear-gradient(145deg, #EFEBFA, #CFC8EA); }
+.icon.busy .glyph { opacity: 0.9; }
+
+.slot.busy {
+  background: rgba(207, 200, 234, 0.28);
+  box-shadow: none;
+  border: 2px dashed rgba(150, 135, 205, 0.5);
+}
+.slot.busy .slot-text { color: #6C5FA8; }
+.slot.busy .slot-meta { color: #8479B8; }
+
+.busy-btn {
+  display: block; width: 100%;
+  margin-top: 10px; padding: 12px 14px;
+  border-radius: 18px;
+  font-size: 15px; font-weight: 700; color: #6C5FA8;
+  background: rgba(207, 200, 234, 0.3);
+  transition: transform 0.25s var(--spring), background 0.2s;
+}
+.busy-btn:active { transform: scale(0.97); }
+
+.extras-title { margin: 18px 0 8px; font-size: 13px; font-weight: 800; letter-spacing: 0.02em; color: var(--ink-2); }
+
+.slot.add.redeem {
+  background: rgba(255, 154, 92, 0.12);
+  border-color: rgba(255, 154, 92, 0.6);
+  color: #C2561F;
+}
+.slot.add.redeem .plus { background: rgba(255, 154, 92, 0.2); font-size: 30px; }
+.type-chip.redeem { color: #B4501C; background: rgba(255, 154, 92, 0.2); }
+
+.more {
+  position: absolute; top: 3px; right: 3px;
+  padding: 3px 5px; border-radius: 8px;
+  font-size: 10px; font-weight: 800; line-height: 1; color: #fff;
+  background: var(--accent-2);
+  box-shadow: 0 1px 4px rgba(194, 86, 31, 0.35);
+}
+
+.bank { margin-top: 12px; padding: 12px 14px; border-radius: 16px; background: rgba(207, 200, 234, 0.35); color: #5B4E96; font-size: 14px; }
+.bank b { display: block; font-size: 15px; }
+.bank span { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: #7C70B0; }

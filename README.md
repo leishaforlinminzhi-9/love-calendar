@@ -3,9 +3,20 @@
 一个温暖明亮、iPhone 风格的小网站：用日历记录**每天两份与爱有关的表达**，并根据表达的类型，生成一枚色彩缤纷又风格统一的小图标。手机和电脑浏览器都能用。
 
 - **前端**：原生 HTML / CSS / JS，无需构建，托管在 GitHub Pages
-- **后端**：零依赖的 Node 服务，负责**跨设备同步**、拼稳定风格的 prompt、调用图像 API（密钥不暴露给浏览器）
+- **后端**：零依赖，同一份代码既能在本机用 Node 跑，也能部署到 **Cloudflare Workers**（免费、不休眠、不用绑卡）。负责**跨设备同步**、拼稳定风格的 prompt、调用图像 API（密钥不暴露给浏览器）
 - **同步**：手机、电脑打开同一个网址、填同一个访问口令，看到的是同一份日历。离线也能记，联网后自动合并
 - **日期**：可以补记过去的日子，也可以**提前一天**写明天的；再往后的日期会锁定
+- **积攒**：太忙了就点「太忙了，先攒着」，之后在空闲的日子**多写几份来兑现**，欠几份会一直帮你记着
+
+## 太忙了？先攒着，日后兑现
+
+- 某一天太忙，没法记下两份爱：点当天的「💤 太忙了，先攒着」，当天**还空着的位置**会变成"攒下"（日历格子里显示 💤，每天最多攒 2 份）。
+- **还欠几份 = 攒下的份数 − 已兑现的份数**，显示在「本月的爱」卡片里。
+- 之后在任何一天（含明天），只要还欠着，当天就会多出一个 🎁「兑现一份积攒的爱」入口，可以在这一天**额外**再写一份（一天最多额外兑现 4 份）。写一份，欠的就少一份。
+- 点一下"攒着"的位置，可以直接补写成真正的爱，或者「取消积攒」。
+- 刚刚攒下的那一天不会出现兑现入口：今天忙到要攒着，当天再去补写说不通。
+- 攒下的 💤 不算"已记录"，不会增加"连续记录天数"，也不计入月度统计。
+- 这些都只是普通记录，所以和其他数据一样**跨设备同步**，两台设备算出来的"还欠几份"始终一致。
 
 ## 跨设备同步是怎么工作的
 
@@ -22,13 +33,13 @@
 | 场景 | 存储 | 说明 |
 | --- | --- | --- |
 | 本机运行 `npm start` | 文件（`data/`） | 默认，不用配置 |
-| 线上（Render 等） | **Upstash Redis**（强烈推荐） | 免费、持久、纯 HTTP，不用装任何驱动 |
+| 线上（Cloudflare Workers / Render 等） | **Upstash Redis**（必须） | 免费、持久、纯 HTTP，不用装任何驱动 |
 
-Render 免费版的磁盘是临时的，实例休眠重启就清空，所以线上**必须**接 Upstash（后端检测到 Render + 文件存储会在设置页和日志里给出警告）。设置只要两分钟：
+Workers 没有磁盘，Render 免费版的磁盘休眠重启就清空，所以线上**必须**接 Upstash（后端检测到 Render + 文件存储会在设置页和日志里给出警告）。设置只要两分钟：
 
 1. 到 [console.upstash.com](https://console.upstash.com) 新建一个 Redis 数据库（Region 选离你近的，免费版即可）
 2. 在数据库页的 **REST API** 一栏复制 `UPSTASH_REDIS_REST_URL` 和 `UPSTASH_REDIS_REST_TOKEN`
-3. 把这两个值填进 Render 的环境变量
+3. 把这两个值作为密钥填给线上后端（见下面的部署步骤）
 
 数据量很小：一条记录几百字节，一年约 700 条加几百个 20KB 的图标，远低于免费额度。
 
@@ -72,36 +83,55 @@ npm start              # http://localhost:3000
 **复用已生成的图，不重复花钱**（三层）：
 
 1. **浏览器端**：同一台设备上，已经有「同类型 + 同文字」的图标，就直接用，连请求都不发。
-2. **服务端缓存**（`data/cache/`）：按「类型 + 文字 + prompt 版本」缓存，空格 / 全半角差异会被归一化。缓存**不含模型名**，将来换模型也能继续复用旧图。
+2. **服务端缓存**：生成出来的原图和浏览器上传的小图都存在持久存储里，按「类型 + 文字 + prompt 版本」查找，空格 / 全半角差异会被归一化。缓存**不含模型名**，将来换模型也能继续复用旧图。
 3. **并发去重**：两个相同的请求同时到达，只付一次钱。
 
 只有点「换一张新图标（会消耗额度）」才会绕过缓存。改了 `server/prompt.js` 里的画风想让旧图全部作废时，把 `PROMPT_VERSION` 加 1。
 
-**超过提醒线会警告你**：后端把每次真实调用的花费（按返回的 token 用量精确计算）记在 `data/ledger.json`。累计超过 `BUDGET_WARN_USD`（默认 $50）后，页面顶部会出现红色横幅并弹出提示，设置页的「已花费」一栏也能随时看，后端日志里还会有醒目的 `BUDGET WARNING`。
+**超过提醒线会警告你**：后端把每次真实调用的花费（按返回的 token 用量精确计算）累加到持久存储里的**原子计数器**（多处同时运行也不会互相覆盖）。累计超过 `BUDGET_WARN_USD`（默认 $50）后，页面顶部会出现红色横幅并弹出提示，设置页的「已花费」一栏也能随时看，后端日志里还会有醒目的 `BUDGET WARNING`。
 
 > **这个账本只统计经过本服务的调用**，不是 OpenAI 账号的总用量。真正的硬上限请在 [OpenAI 后台 Billing → Limits](https://platform.openai.com/settings/organization/billing/limits) 里设置月度预算。
->
-> 账本、同步数据和小图标都放在上面的持久存储里（接了 Upstash 就不会因为 Render 重启而丢）。只有"原始大图缓存"（`data/cache/`）是纯文件，重启后会清空，但小图标已经在持久存储里，复用不受影响。
 
 ## 部署到 GitHub
 
-GitHub Pages 只能托管静态文件，所以分两部分：前端放 Pages，后端放一个能跑 Node 的免费服务（下面以 Render 为例，仓库里已有 [`render.yaml`](render.yaml)）。
+GitHub Pages 只能托管静态文件，所以分两部分：**前端放 Pages，后端放一个能跑 JS 的免费服务**。后端有两种选择：
+
+| | Cloudflare Workers（推荐） | Render |
+| --- | --- | --- |
+| 费用 | 免费，不用绑卡 | 免费，但创建服务时可能要求绑卡验证 |
+| 休眠 | 不休眠 | 闲置 15 分钟后休眠，再次访问要等 30–60 秒 |
+| 配置文件 | [`wrangler.toml`](wrangler.toml) | [`render.yaml`](render.yaml) |
 
 ### 1. 推送到 GitHub
 
 Pages 免费版需要**公开仓库**。`.env` 已在 `.gitignore` 里，密钥不会被提交。
 
-### 2. 部署后端（Render）
+### 2A. 部署后端：Cloudflare Workers（推荐）
 
-1. Render → New → Blueprint → 选这个仓库
-2. 填环境变量：
-   - `IMAGE_API_KEY`：你的图像 API 密钥
-   - `ALLOWED_ORIGINS`：你的 Pages 地址，如 `https://<用户名>.github.io`
-   - `ACCESS_CODE`：**必填**，自己设一个口令。它既保护你的日记，也防止别人刷你的额度
-   - `UPSTASH_REDIS_REST_URL`、`UPSTASH_REDIS_REST_TOKEN`：见上面的"后端数据存哪"
+1. 注册一个 [Cloudflare](https://dash.cloudflare.com/sign-up) 免费账号。
+2. 在项目目录里登录并部署（会在浏览器里授权一次）：
+   ```bash
+   npx wrangler@4 login
+   npx wrangler@4 deploy
+   ```
+   第一次部署会让你起一个 `workers.dev` 子域名，完成后得到后端地址，形如 `https://love-calendar-api.<你的子域名>.workers.dev`。
+3. 设置 4 个密钥（每条命令会提示你粘贴值，粘贴时屏幕不显示是正常的）：
+   ```bash
+   npx wrangler@4 secret put IMAGE_API_KEY
+   npx wrangler@4 secret put ACCESS_CODE
+   npx wrangler@4 secret put UPSTASH_REDIS_REST_URL
+   npx wrangler@4 secret put UPSTASH_REDIS_REST_TOKEN
+   ```
+   `ACCESS_CODE` 是你自己编的口令，**必填**，它既保护你的日记，也防止别人刷你的额度。
+4. 验证：`curl https://你的后端地址/api/health`，应该看到 `"store":"upstash"` 和 `"imageConfigured":true`。
+
+`wrangler.toml` 里已经写好了不涉及密钥的配置（模型、`ALLOWED_ORIGINS` 等）。免费版每个请求最多只能对外发 50 次请求，后端的存储读写已经做了批量化（一次同步 700 条记录只需要 3 次）。
+
+### 2B. 部署后端：Render（备选）
+
+1. Render → New → Blueprint → 选这个仓库（找不到 Blueprint 入口也可以手动建一个 Web Service：Build Command 填 `npm install --omit=dev`，Start Command 填 `npm start`）
+2. 填环境变量：`IMAGE_API_KEY`、`ALLOWED_ORIGINS`（你的 Pages 地址，如 `https://<用户名>.github.io`）、`ACCESS_CODE`、`UPSTASH_REDIS_REST_URL`、`UPSTASH_REDIS_REST_TOKEN`
 3. 部署完成后得到后端地址，如 `https://love-calendar-api.onrender.com`
-
-> Render 免费实例闲置后会休眠，第一次请求可能要等 30–60 秒。前端打开时会先 ping 一下 `/api/health` 提前唤醒。
 
 ### 3. 部署前端（GitHub Pages）
 
@@ -120,19 +150,26 @@ Pages 免费版需要**公开仓库**。`.env` 已在 `.gitignore` 里，密钥�
 - `RATE_PER_MIN`（默认 6）：每个 IP 每分钟的生成次数
 - `DAILY_LIMIT`（默认 200）：每天的生成总量
 
+限流计数放在持久存储里，而不是内存里，所以在 Workers 这种多处同时运行的环境里也准确。
+
 ## 目录
 
 ```
 frontend/   静态前端（直接部署到 Pages）
   love-types.js   类型定义：标签、配色、主体、关键词（前后端共用）
-  app.js          日历、弹层、生成流程、同步引擎
+  app.js          日历、弹层、生成流程、积攒与兑现、同步引擎
   store.js        本地 IndexedDB 封装
-server/     Node 后端：同步 + prompt 构造 + 图像 API 代理 + 静态托管
-  sync.js         同步合并规则（按条目取最后修改、删除标记、纪元）
-  store.js        持久存储：本地文件 / Upstash Redis 两种实现
+server/     后端（一份业务代码，两个入口）
+  app.js          与运行环境无关的请求处理：同步、图标、生成、限流（标准 Request → Response）
+  index.js        Node 入口：本机运行、托管前端静态文件
+  worker.js       Cloudflare Workers 入口
+  sync.js         同步合并规则（按条目取最后修改、删除标记、纪元、积攒/兑现位置的校验）
+  store-file.js   持久存储：本地文件
+  store-upstash.js 持久存储：Upstash Redis（批量请求，Workers 也能用）
   prompt.js       稳定的风格 prompt（PROMPT_VERSION 控制缓存失效）
-  cache.js        生成图的原始文件缓存
   spend.js        价格表、花费账本
+wrangler.toml  Cloudflare Workers 配置
+render.yaml    Render 配置
 data/       本机运行时生成：同步数据、图标、账本（已被 .gitignore 忽略）
 ```
 
@@ -141,4 +178,5 @@ data/       本机运行时生成：同步数据、图标、账本（已被 .git
 - 这是**单人**日历：所有设备共享同一份数据，由一个访问口令保护，没有多账号。
 - 两台设备在**同一个位置**同时改，后改的会覆盖先改的（不会弹冲突提示）。
 - 想给自己留一份备份，可以用 ⚙︎ →「导出备份」，它导出的是 JSON 文件。
-- 「清空所有记录」会清空**所有设备**上的数据。
+- 「清空所有记录」会清空**所有设备**上的数据（包括攒着的 💤）。
+- Cloudflare 免费版每个请求的 CPU 时间有限制（10ms）；日常使用远低于这个量，但生成图标那一次请求处理较大的图片数据，是离上限最近的一处。

@@ -54,7 +54,29 @@ const liveEntry = (id) => {
   const e = state.entries.get(id);
   return e && !e.deleted ? e : null;
 };
+// A day has two normal slots (0, 1). Each one is a love entry, a "banked" placeholder (too busy, owe it for later),
+// or empty. Slots 2..5 are extras written on a later day to redeem what was banked.
+const EXTRA_SLOTS = 4;
+const isBusy = (e) => e.kind === 'busy';
+const loved = () => live().filter((e) => !isBusy(e)); // real expressions only
 const entriesOn = (date) => Array.from({ length: SLOTS }, (_, i) => liveEntry(`${date}_${i}`) ?? undefined);
+const extrasOn = (date) => Array.from({ length: EXTRA_SLOTS }, (_, i) => liveEntry(`${date}_${SLOTS + i}`)).filter(Boolean);
+const itemsOn = (date) => [...entriesOn(date).filter(Boolean), ...extrasOn(date)]; // everything shown for a day
+const nextExtraSlot = (date) => {
+  for (let s = SLOTS; s < SLOTS + EXTRA_SLOTS; s++) if (!liveEntry(`${date}_${s}`)) return s;
+  return null;
+};
+// How many expressions are still owed: banked placeholders minus extras already written. Derived from the
+// entries themselves, so it is always consistent and syncs between devices for free.
+function bank() {
+  let banked = 0;
+  let redeemed = 0;
+  for (const e of live()) {
+    if (isBusy(e)) banked += 1;
+    else if (e.slot >= SLOTS) redeemed += 1;
+  }
+  return { banked, redeemed, owed: Math.max(0, banked - redeemed) };
+}
 // Strictly increasing per entry, so a fast second edit (or a clock that went back) still wins the merge.
 const nextStamp = (id) => Math.max(Date.now(), (state.entries.get(id)?.updatedAt ?? 0) + 1);
 
@@ -78,6 +100,7 @@ function toastOnce(msg) {
 // ---------- rendering ----------
 
 function icon(e, cls = '') {
+  if (isBusy(e)) return `<span class="icon busy ${cls}"><span class="glyph">💤</span></span>`;
   const t = typeOf(e.type);
   const classes = ['icon', cls, e.status === 'pending' && 'loading', popKeys.has(e.id) && 'pop'].filter(Boolean).join(' ');
   const inner = e.icon ? `<img src="${e.icon}" alt="" draggable="false">` : `<span class="glyph">${t.emoji}</span>`;
@@ -94,11 +117,15 @@ function renderCalendar() {
   let html = '<span class="day-cell empty"></span>'.repeat(offset);
   for (let d = 1; d <= count; d++) {
     const key = keyOf(y, m, d);
-    const es = entriesOn(key).filter(Boolean);
+    const es = itemsOn(key);
+    const shown = es.slice(0, 2);
+    const more = es.length - shown.length;
+    const busyCount = es.filter(isBusy).length;
     const cls = ['day-cell', key === today && 'today', key === state.selected && 'sel', key > limit && 'future'].filter(Boolean).join(' ');
     html +=
-      `<button class="${cls}" data-date="${key}" aria-pressed="${key === state.selected}" aria-label="${m + 1}月${d}日，${es.length}份爱">` +
-      `<span class="num">${d}</span><span class="icons" data-n="${es.length}">${es.map((e) => icon(e)).join('')}</span></button>`;
+      `<button class="${cls}" data-date="${key}" aria-pressed="${key === state.selected}" aria-label="${m + 1}月${d}日，${es.length - busyCount}份爱${busyCount ? `，攒着${busyCount}份` : ''}">` +
+      `<span class="num">${d}</span><span class="icons" data-n="${shown.length}">${shown.map((e) => icon(e)).join('')}</span>` +
+      `${more > 0 ? `<span class="more">+${more}</span>` : ''}</button>`;
   }
   $('days').innerHTML = html;
 }
@@ -111,7 +138,23 @@ function slotHTML(e) {
   return (
     `<div class="slot" role="button" tabindex="0" data-slot="${e.slot}">${icon(e, 'card-icon')}` +
     `<div class="slot-body"><div class="slot-text">${esc(e.text)}</div>` +
-    `<div class="slot-meta"><span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>${status}</div></div></div>`
+    `<div class="slot-meta"><span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>` +
+    `${e.slot >= SLOTS ? '<span class="type-chip redeem">🎁 兑现</span>' : ''}${status}</div></div></div>`
+  );
+}
+
+function busySlotHTML(e) {
+  return (
+    `<div class="slot busy" role="button" tabindex="0" data-slot="${e.slot}">${icon(e, 'card-icon')}` +
+    '<div class="slot-body"><div class="slot-text">太忙了，先攒着</div>' +
+    '<div class="slot-meta">之后可以兑现 · 点一下补写或取消</div></div></div>'
+  );
+}
+
+function redeemHTML(owed) {
+  return (
+    '<button class="slot add redeem" data-redeem><span class="plus">🎁</span>' +
+    `<span class="add-text"><span class="add-title">兑现一份积攒的爱</span><span class="add-sub">还欠 ${owed} 份 · 在这一天多写一份</span></span></button>`
   );
 }
 
@@ -128,26 +171,39 @@ function renderDay() {
   const today = todayKey();
   const tomorrow = tomorrowKey();
   const es = entriesOn(key);
-  const n = es.filter(Boolean).length;
+  const loveN = es.filter((e) => e && !isBusy(e)).length;
+  const busyN = es.filter((e) => e && isBusy(e)).length;
+  const emptyN = es.filter((e) => !e).length;
+  const extras = extrasOn(key);
+  const { owed } = bank();
+  const dayWord = key === today ? '今天' : key === tomorrow ? '明天' : '这一天';
 
   let html =
     `<div class="day-head"><h2>${m + 1}月${d}日 · 周${WEEKDAYS[new Date(y, m, d).getDay()]}` +
     `${key === today ? '<span class="tag">今天</span>' : key === tomorrow ? '<span class="tag soft">明天</span>' : ''}</h2>` +
-    `<span class="counter">${n}/${SLOTS}</span></div>`;
+    `<span class="counter">${loveN}/${SLOTS}${busyN ? ` · 💤${busyN}` : ''}${extras.length ? ` · 🎁${extras.length}` : ''}</span></div>`;
 
   if (key > tomorrow) {
     html += '<p class="day-lead">未来的爱，留给未来的你 ✨ 最多可以提前一天写哦。</p>';
   } else {
-    if (n === 0) {
-      html += `<p class="day-lead">${key === tomorrow ? '明天有哪些爱的表达？可以提前写下。' : `${key === today ? '今天' : '这一天'}有哪些爱的表达？给出的、收到的，都算。`}</p>`;
+    if (loveN + busyN + extras.length === 0) {
+      html += `<p class="day-lead">${key === tomorrow ? '明天有哪些爱的表达？可以提前写下。' : `${dayWord}有哪些爱的表达？给出的、收到的，都算。`}</p>`;
     }
-    html += '<div class="slots">' + es.map((e, i) => (e ? slotHTML(e) : addHTML(key, i))).join('') + '</div>';
+    html += '<div class="slots">' + es.map((e, i) => (!e ? addHTML(key, i) : isBusy(e) ? busySlotHTML(e) : slotHTML(e))).join('') + '</div>';
+    // too busy to write them? bank the empty slots now and pay them back later
+    if (emptyN) html += `<button class="busy-btn" data-busy>💤 ${dayWord}太忙了，先攒着（攒 ${emptyN} 份）</button>`;
+    // extras: expressions written beyond the daily two, which pay back what was banked
+    // (not on a day that was itself banked: too busy to write today, but writing extra today makes no sense)
+    const canRedeem = owed > 0 && extras.length < EXTRA_SLOTS && busyN === 0;
+    if (extras.length || canRedeem) {
+      html += '<div class="extras-title">兑现积攒的爱</div><div class="slots">' + extras.map(slotHTML).join('') + (canRedeem ? redeemHTML(owed) : '') + '</div>';
+    }
   }
   $('dayCard').innerHTML = html;
 }
 
 function streak() {
-  const days = new Set(live().map((e) => e.date));
+  const days = new Set(loved().map((e) => e.date));
   const d = new Date();
   if (!days.has(fmt(d))) d.setDate(d.getDate() - 1);
   let n = 0;
@@ -163,13 +219,14 @@ function renderStats() {
   const prefix = `${y}-${pad(m + 1)}-`;
   const counts = new Map();
   let total = 0;
-  for (const e of live()) {
+  for (const e of loved()) {
     if (!e.date.startsWith(prefix)) continue;
     counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
     total += 1;
   }
   const rows = LOVE_TYPES.filter((t) => counts.has(t.id)).sort((a, b) => counts.get(b.id) - counts.get(a.id));
   const run = streak();
+  const { banked, redeemed, owed } = bank();
 
   $('statsCard').innerHTML =
     '<h3>本月的爱</h3>' +
@@ -178,7 +235,10 @@ function renderStats() {
       : '<p class="stats-sum">这个月还没有记录，从一份小小的心意开始吧</p>') +
     `<div class="bar">${rows.map((t) => `<i style="--c:${t.color};flex-grow:${counts.get(t.id)}" title="${t.label}"></i>`).join('')}</div>` +
     (total ? `<div class="legend">${rows.map((t) => `<span style="--c:${t.color}">${t.label} ${counts.get(t.id)}</span>`).join('')}</div>` : '') +
-    (run ? `<div class="streak">🌟 已连续记录 ${run} 天</div>` : '');
+    (run ? `<div class="streak">🌟 已连续记录 ${run} 天</div>` : '') +
+    (banked
+      ? `<div class="bank"><b>💤 攒着 ${owed} 份爱待兑现</b><span>累计攒下 ${banked} 份 · 已兑现 ${redeemed} 份${owed ? ' · 找个空闲的日子多写几份吧' : ' · 都还清啦 🎉'}</span></div>`
+      : '');
 }
 
 function renderAll() {
@@ -266,16 +326,20 @@ function syncEntryForm() {
 }
 
 function openEntry(date, slot) {
-  const entry = liveEntry(`${date}_${slot}`);
+  const existing = liveEntry(`${date}_${slot}`);
+  const busy = Boolean(existing && isBusy(existing)); // a banked "too busy" placeholder, not a real expression
+  const entry = existing && !busy ? existing : null;
+  const extra = slot >= SLOTS;
   const { m, d, y } = parse(date);
-  draft = { date, slot, entry, type: entry?.type ?? 'other', locked: Boolean(entry) };
+  draft = { date, slot, entry, busy, type: entry?.type ?? 'other', locked: Boolean(entry) };
 
-  $('entryTitle').textContent = entry ? '编辑这份爱' : '写下一份爱';
-  $('entryDate').textContent = `${m + 1}月${d}日 周${WEEKDAYS[new Date(y, m, d).getDay()]} · 第 ${slot + 1} 份`;
+  $('entryTitle').textContent = entry ? '编辑这份爱' : busy ? '补上这份爱' : extra ? '兑现一份积攒的爱' : '写下一份爱';
+  $('entryDate').textContent = `${m + 1}月${d}日 周${WEEKDAYS[new Date(y, m, d).getDay()]} · ${extra ? '兑现' : `第 ${slot + 1} 份`}`;
   $('entryText').value = entry?.text ?? '';
   $('entryText').placeholder = example(date, slot);
   $('regenBtn').hidden = !entry;
-  $('deleteBtn').hidden = !entry;
+  $('deleteBtn').hidden = !(entry || busy);
+  $('deleteBtn').textContent = busy ? '取消积攒' : '删除';
   syncEntryForm();
   openSheet($('entrySheet'));
   setTimeout(() => $('entryText').focus({ preventScroll: true }), 350);
@@ -290,7 +354,7 @@ async function commitEntry({ regen = false } = {}) {
   const changed = !prev || prev.text !== text || prev.type !== type;
   const old = state.entries.get(id); // may be a tombstone of an earlier deletion
   const entry = {
-    id, date, slot, text, type,
+    id, date, slot, kind: 'love', text, type,
     icon: changed ? null : prev.icon ?? null,
     iconKey: changed ? null : prev.iconKey ?? null,
     iconUploaded: changed ? false : prev.iconUploaded ?? false,
@@ -315,9 +379,35 @@ async function commitEntry({ regen = false } = {}) {
   if (needsIcon) generate(id, { fresh: regen });
 }
 
+// "Too busy": bank the day's empty slots as placeholders, to be paid back later with extra expressions.
+async function markBusy(date) {
+  const es = entriesOn(date);
+  const made = [];
+  for (let slot = 0; slot < SLOTS; slot++) {
+    if (es[slot]) continue;
+    const id = `${date}_${slot}`;
+    const old = state.entries.get(id);
+    const entry = {
+      id, date, slot, kind: 'busy', text: '', type: 'other',
+      icon: null, iconKey: null, iconUploaded: true, status: 'fallback',
+      deleted: false, dirty: true, rev: old?.rev,
+      createdAt: old?.createdAt ?? Date.now(),
+      updatedAt: nextStamp(id),
+    };
+    state.entries.set(id, entry);
+    made.push(entry);
+  }
+  if (!made.length) return;
+  renderAll();
+  navigator.vibrate?.(8);
+  toast(`已攒下 ${made.length} 份，之后可以兑现 💤`);
+  await store.save(made);
+  scheduleSync();
+}
+
 function tombstone(e) {
   return {
-    id: e.id, date: e.date, slot: e.slot, text: '', type: e.type,
+    id: e.id, date: e.date, slot: e.slot, kind: e.kind ?? 'love', text: '', type: e.type,
     icon: null, iconKey: null, iconUploaded: false, status: 'fallback',
     deleted: true, dirty: true, rev: e.rev, createdAt: e.createdAt,
     updatedAt: nextStamp(e.id),
@@ -510,7 +600,7 @@ async function markAllDirty() {
   await store.save(all);
 }
 
-const wire = (e) => ({ date: e.date, slot: e.slot, text: e.text, type: e.type, deleted: e.deleted === true, createdAt: e.createdAt, updatedAt: e.updatedAt });
+const wire = (e) => ({ date: e.date, slot: e.slot, kind: e.kind ?? 'love', text: e.text, type: e.type, deleted: e.deleted === true, createdAt: e.createdAt, updatedAt: e.updatedAt });
 
 function applyRemote(r, touched) {
   const local = state.entries.get(r.id);
@@ -523,10 +613,12 @@ function applyRemote(r, touched) {
   }
 
   // the other device's version is newer (or this entry is new here)
-  const contentChanged = !local || local.text !== r.text || local.type !== r.type || local.deleted !== (r.deleted === true);
+  const kind = r.kind === 'busy' ? 'busy' : 'love';
+  const contentChanged =
+    !local || (local.kind ?? 'love') !== kind || local.text !== r.text || local.type !== r.type || local.deleted !== (r.deleted === true);
   const merged = {
     ...(local ?? {}),
-    id: r.id, date: r.date, slot: r.slot, text: r.text, type: r.type,
+    id: r.id, date: r.date, slot: r.slot, kind, text: r.text, type: r.type,
     deleted: r.deleted === true, createdAt: r.createdAt, updatedAt: r.updatedAt, rev: r.rev,
     iconKey: r.iconKey ?? null, dirty: false,
   };
@@ -695,7 +787,7 @@ function openSettings() {
 }
 
 function exportData() {
-  const entries = live().map(({ id, date, slot, text, type, icon, createdAt, updatedAt }) => ({ id, date, slot, text, type, icon, createdAt, updatedAt }));
+  const entries = live().map(({ id, date, slot, kind, text, type, icon, createdAt, updatedAt }) => ({ id, date, slot, kind: kind ?? 'love', text, type, icon, createdAt, updatedAt }));
   const payload = JSON.stringify({ app: 'love-calendar', version: 1, exportedAt: new Date().toISOString(), entries });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
@@ -706,17 +798,21 @@ function exportData() {
 
 function sanitizeEntry(raw) {
   const slot = Number(raw?.slot);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw?.date) || ![0, 1].includes(slot) || typeof raw.text !== 'string' || !raw.text.trim()) return null;
-  const okIcon = typeof raw.icon === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(raw.icon);
+  const kind = raw?.kind === 'busy' ? 'busy' : 'love';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw?.date) || !Number.isInteger(slot) || slot < 0 || slot >= SLOTS + EXTRA_SLOTS) return null;
+  if (kind === 'busy' && slot >= SLOTS) return null; // only the two daily slots can be banked
+  if (kind === 'love' && (typeof raw.text !== 'string' || !raw.text.trim())) return null;
+  const okIcon = kind === 'love' && typeof raw.icon === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(raw.icon);
   return {
     id: `${raw.date}_${slot}`,
     date: raw.date,
     slot,
-    text: raw.text.trim().slice(0, 60),
-    type: TYPE_IDS.includes(raw.type) ? raw.type : 'other',
+    kind,
+    text: kind === 'busy' ? '' : raw.text.trim().slice(0, 60),
+    type: kind === 'love' && TYPE_IDS.includes(raw.type) ? raw.type : 'other',
     icon: okIcon ? raw.icon : null,
     iconKey: null, // the server assigns it on the next sync; the icon is then uploaded from here
-    iconUploaded: false,
+    iconUploaded: kind === 'busy', // a banked placeholder has no icon to upload
     status: okIcon ? 'ready' : 'fallback',
     deleted: false,
     dirty: true,
@@ -752,6 +848,15 @@ function bind() {
   });
 
   $('dayCard').addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-busy]')) {
+      markBusy(state.selected);
+      return;
+    }
+    if (ev.target.closest('[data-redeem]')) {
+      const slot = nextExtraSlot(state.selected);
+      if (slot !== null) openEntry(state.selected, slot);
+      return;
+    }
     if (ev.target.closest('[data-retry]')) {
       const slot = ev.target.closest('.slot').dataset.slot;
       const id = `${state.selected}_${slot}`;
@@ -809,7 +914,7 @@ function bind() {
   });
   $('regenBtn').addEventListener('click', () => commitEntry({ regen: true }));
   $('cancelBtn').addEventListener('click', () => closeSheet($('entrySheet')));
-  $('deleteBtn').addEventListener('click', (ev) => confirmTap(ev.currentTarget, '再点一次确认删除', deleteEntry));
+  $('deleteBtn').addEventListener('click', (ev) => confirmTap(ev.currentTarget, draft.busy ? '再点一次确认取消' : '再点一次确认删除', deleteEntry));
 
   // settings sheet
   $('settingsBtn').addEventListener('click', openSettings);

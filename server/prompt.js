@@ -17,6 +17,17 @@ export function normalizeText(text) {
   return String(text ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 }
 
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); // Node 20+ and Workers
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Identifies one generated icon: (type, text, prompt version) only. The model is deliberately not part of it,
+// so switching models later still reuses every image that was already paid for.
+export function iconKey(type, text) {
+  return sha256Hex(`v${PROMPT_VERSION}|${type}|${normalizeText(text)}`);
+}
+
 function clean(text) {
   return normalizeText(text)
     .replace(/[\u0000-\u001f"“”\\]/g, ' ')

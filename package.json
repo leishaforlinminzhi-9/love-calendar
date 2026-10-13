@@ -4,9 +4,13 @@
   "private": true,
   "description": "A warm, iPhone-style calendar for recording two expressions of love every day, with AI-generated icons.",
   "type": "module",
-  "engines": { "node": ">=20.12" },
+  "engines": {
+    "node": ">=20.12"
+  },
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch server/index.js",
+    "worker:dev": "npx --yes wrangler@4 dev",
+    "worker:deploy": "npx --yes wrangler@4 deploy"
   }
 }

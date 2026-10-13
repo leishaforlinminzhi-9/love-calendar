@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { normalizeText } from './prompt.js';
 
 const DAY = 86_400_000;
@@ -10,21 +9,28 @@ export function isIconDataUrl(value) {
   return typeof value === 'string' && value.length <= MAX_ICON_BYTES && ICON_RE.test(value);
 }
 
+// Slots 0 and 1 are the daily pair; slots 2..MAX_SLOT hold "redeemed" extras written on a later day.
+const MAX_SLOT = 5;
+
 // Entries arrive from browsers, so everything is re-validated here.
 function sanitize(raw, typeIds) {
   const slot = Number(raw?.slot);
-  if (typeof raw?.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.date) || ![0, 1].includes(slot)) return null;
+  if (typeof raw?.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.date) || !Number.isInteger(slot) || slot < 0 || slot > MAX_SLOT) return null;
   const updatedAt = Number(raw.updatedAt);
   if (!Number.isFinite(updatedAt) || updatedAt <= 0) return null;
+  // 'busy' = "too busy, banked for later": a placeholder in one of the two daily slots, no text
+  const kind = raw.kind === 'busy' ? 'busy' : 'love';
+  if (kind === 'busy' && slot > 1) return null;
   const deleted = raw.deleted === true;
-  const text = deleted ? '' : normalizeText(raw.text).slice(0, 60);
-  if (!deleted && !text) return null;
+  const text = deleted || kind === 'busy' ? '' : normalizeText(raw.text).slice(0, 60);
+  if (!deleted && kind === 'love' && !text) return null;
   return {
     id: `${raw.date}_${slot}`,
     date: raw.date,
     slot,
+    kind,
     text,
-    type: typeIds.includes(raw.type) ? raw.type : 'other',
+    type: kind === 'love' && typeIds.includes(raw.type) ? raw.type : 'other',
     deleted,
     createdAt: Number(raw.createdAt) || updatedAt,
     // a device with a wrong clock must not be able to win every conflict forever
@@ -33,6 +39,7 @@ function sanitize(raw, typeIds) {
 }
 
 // Last-writer-wins per entry (by updatedAt). Deletions are tombstones so they propagate to other devices.
+// Everything a sync needs from the store is a handful of batched calls, however many entries are pushed.
 export function createSync({ store, iconKeyFor, typeIds }) {
   let epochPromise = null;
 
@@ -42,10 +49,13 @@ export function createSync({ store, iconKeyFor, typeIds }) {
     epochPromise ??= (async () => {
       const meta = await store.getJson('meta');
       if (meta?.epoch) return meta.epoch;
-      const epoch = randomUUID();
+      const epoch = crypto.randomUUID();
       await store.setJson('meta', { epoch, createdAt: new Date().toISOString() });
       return epoch;
-    })();
+    })().catch((err) => {
+      epochPromise = null; // let the next request retry instead of caching a failure
+      throw err;
+    });
     return epochPromise;
   }
 
@@ -53,14 +63,29 @@ export function createSync({ store, iconKeyFor, typeIds }) {
     const epoch = await ensureEpoch();
     const current = new Map((await store.entries.all()).map((e) => [e.id, e]));
 
+    // keep only changes that are newer than what is stored (a later change to the same id replaces an earlier one)
+    const accepted = new Map();
     for (const raw of (Array.isArray(body?.changes) ? body.changes : []).slice(0, 2000)) {
       const change = sanitize(raw, typeIds);
       if (!change) continue;
       const existing = current.get(change.id);
       if (existing && existing.updatedAt >= change.updatedAt) continue;
-      const entry = { ...change, iconKey: change.deleted ? null : iconKeyFor(change.type, change.text), rev: await store.incr('rev') };
-      await store.entries.put(entry.id, entry);
-      current.set(entry.id, entry);
+      accepted.set(change.id, change);
+      current.set(change.id, change);
+    }
+
+    if (accepted.size) {
+      const last = await store.counters.add('rev', accepted.size); // reserve a block of revisions in one call
+      const first = last - accepted.size + 1;
+      const written = await Promise.all(
+        [...accepted.values()].map(async (c, i) => ({
+          ...c,
+          iconKey: c.deleted || c.kind === 'busy' ? null : await iconKeyFor(c.type, c.text),
+          rev: first + i,
+        })),
+      );
+      await store.entries.putMany(written);
+      for (const e of written) current.set(e.id, e);
     }
 
     const knownEpoch = typeof body?.epoch === 'string' ? body.epoch : null;

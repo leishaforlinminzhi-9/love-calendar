@@ -23,19 +23,16 @@ function parseOverride(text) {
   return nums.length === 3 && nums.every((n) => Number.isFinite(n) && n >= 0) ? nums : null;
 }
 
-// Running total of what this server has spent on the image API. It lives in the durable store, so it
-// survives restarts (and, with Upstash, redeploys). Call init() once before use.
+const SPENT = 'ledger_spent_usd';
+const GENERATIONS = 'ledger_generations';
+const CACHE_HITS = 'ledger_cache_hits';
+
+// Running total of what has been spent on the image API. The numbers are *atomic counters in the store*, not
+// values held in memory: a Worker can run in several places at once (phone and laptop reach different data
+// centers), and each of them must add to the same total instead of overwriting it.
 export function createLedger({ store, warnAtUsd, fallbackCostUsd, priceOverride }) {
   const override = parseOverride(priceOverride);
-  let data = { totalUsd: 0, generations: 0, cacheHits: 0, since: new Date().toISOString() };
-  let writes = Promise.resolve();
-
-  const persist = () => {
-    const snapshot = { ...data };
-    writes = writes
-      .then(() => store.setJson('ledger', snapshot))
-      .catch((err) => console.error('[ledger] could not save:', err.message));
-  };
+  let since = new Date().toISOString();
 
   function costOf(model, usage) {
     const rates = ratesFor(model, override);
@@ -48,29 +45,39 @@ export function createLedger({ store, warnAtUsd, fallbackCostUsd, priceOverride 
 
   return {
     async init() {
-      const saved = await store.getJson('ledger');
-      if (saved) data = { ...data, ...saved };
+      // older versions kept the totals in one JSON document: carry them over once, never double count
+      const legacy = await store.getJson('ledger');
+      if (legacy) {
+        await store.counters.setIfMissing(SPENT, Number(legacy.totalUsd) || 0);
+        await store.counters.setIfMissing(GENERATIONS, Number(legacy.generations) || 0);
+        await store.counters.setIfMissing(CACHE_HITS, Number(legacy.cacheHits) || 0);
+      }
+      const meta = await store.getJson('ledger-meta');
+      if (meta?.since) since = meta.since;
+      else {
+        since = legacy?.since ?? since;
+        await store.setJson('ledger-meta', { since });
+      }
     },
-    status() {
+    async status() {
+      const [spent, generations, cacheHits] = await store.counters.getMany([SPENT, GENERATIONS, CACHE_HITS]);
+      const totalUsd = spent ?? 0;
       return {
-        spentUsd: Math.round(data.totalUsd * 1e4) / 1e4,
+        spentUsd: Math.round(totalUsd * 1e4) / 1e4,
         warnAtUsd,
-        overBudget: data.totalUsd >= warnAtUsd,
-        generations: data.generations,
-        cacheHits: data.cacheHits,
-        since: data.since,
+        overBudget: totalUsd >= warnAtUsd,
+        generations: generations ?? 0,
+        cacheHits: cacheHits ?? 0,
+        since,
       };
     },
-    recordGeneration(model, usage) {
+    async recordGeneration(model, usage) {
       const cost = costOf(model, usage);
-      data.totalUsd += cost.usd;
-      data.generations += 1;
-      persist();
+      await store.counters.addMany({ [SPENT]: cost.usd, [GENERATIONS]: 1 });
       return cost;
     },
-    recordCacheHit() {
-      data.cacheHits += 1;
-      persist();
+    async recordCacheHit() {
+      await store.counters.add(CACHE_HITS, 1);
     },
   };
 }
