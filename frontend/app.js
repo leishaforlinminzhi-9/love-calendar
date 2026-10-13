@@ -903,6 +903,11 @@ function renderApiStatus() {
   else if (h) text = !h.imageConfigured ? '后端未配置图像 API' : h.accessRequired && !accessCode.get() ? '需要访问口令' : `已连接 · ${h.model}`;
   $('apiStatus').textContent = text;
 
+  // the passcode rows only make sense when the backend actually asks for one
+  const gated = Boolean(h?.accessRequired);
+  $('accessCode').closest('.group-row').hidden = !gated;
+  $('lockBtn').hidden = !gated;
+
   let storage = h === null ? '—' : '检查中…';
   if (h) storage = h.store === 'upstash' ? 'Upstash（持久）' : h.ephemeralRisk ? '临时磁盘，重启会丢数据（需接 Upstash）' : '服务器本地文件';
   $('storeStatus').textContent = storage;

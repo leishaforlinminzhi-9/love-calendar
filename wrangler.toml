@@ -17,5 +17,7 @@ IMAGE_API_BASE = "https://api.openai.com/v1"
 IMAGE_MODEL = "gpt-image-2.5-flare"
 # The browser origin allowed to call this API: your GitHub Pages site (scheme + host only, no path).
 ALLOWED_ORIGINS = "https://leishaforlinminzhi-9.github.io"
+# No passcode: anyone with the link sees and edits the same calendar. Set to "false" (and add an ACCESS_CODE secret) to lock it again.
+OPEN_ACCESS = "true"
 DAILY_LIMIT = "100"
 BUDGET_WARN_USD = "50"

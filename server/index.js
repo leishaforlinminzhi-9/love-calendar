@@ -148,7 +148,8 @@ server.listen(PORT, async () => {
       ? `Image API: ${env.IMAGE_API_BASE || 'https://api.openai.com/v1'} (${env.IMAGE_MODEL || 'gpt-image-2.5-flare'}) | spent so far $${b.spentUsd.toFixed(4)} of $${b.warnAtUsd} warn line`
       : 'Image API: not configured (set IMAGE_API_KEY) – the app will use built-in icons.',
   );
-  console.log(`Sync storage: ${store.driver}${env.ACCESS_CODE ? '' : ' | no ACCESS_CODE: API only answers this machine'}`);
+  const openAccess = ['1', 'true', 'yes'].includes(String(env.OPEN_ACCESS ?? '').toLowerCase());
+  console.log(`Sync storage: ${store.driver} | access: ${openAccess ? 'OPEN (anyone with the link can read and write)' : env.ACCESS_CODE ? 'passcode' : 'this machine only (no ACCESS_CODE)'}`);
   if (ephemeralRisk) {
     console.warn('\n!!! Running on Render with a file store: the diary is wiped on every restart. Set UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN. !!!\n');
   }

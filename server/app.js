@@ -51,6 +51,8 @@ export function createApp({ env, store, ephemeralRisk = false }) {
     model: env.IMAGE_MODEL || 'gpt-image-2.5-flare',
     size: env.IMAGE_SIZE ?? '1024x1024',
     accessCode: env.ACCESS_CODE || '',
+    // Explicit opt-in: anyone who has the link may read and write the shared calendar. Limits below still apply.
+    open: ['1', 'true', 'yes'].includes(String(env.OPEN_ACCESS ?? '').toLowerCase()),
     ratePerMin: Number(env.RATE_PER_MIN) || 6,
     dailyLimit: Number(env.DAILY_LIMIT) || 200,
     origins: (env.ALLOWED_ORIGINS || '*').split(',').map((s) => s.trim()).filter(Boolean),
@@ -109,6 +111,7 @@ export function createApp({ env, store, ephemeralRisk = false }) {
   // The diary is private and image generation costs money, so remote callers always need the access code.
   // Without ACCESS_CODE the API only answers requests coming from this very machine (never true on a Worker).
   function requireAccess(request, ctx) {
+    if (cfg.open) return; // OPEN_ACCESS: no passcode, by choice
     if (cfg.accessCode) {
       if (!safeEqual(request.headers.get('x-access-code') ?? '', cfg.accessCode)) throw new HttpError(401, 'unauthorized', '需要正确的访问口令');
       return;
@@ -208,7 +211,8 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       return json(request, 200, {
         ok: true,
         imageConfigured: Boolean(cfg.apiKey),
-        accessRequired: Boolean(cfg.accessCode),
+        accessRequired: Boolean(cfg.accessCode) && !cfg.open,
+        open: cfg.open,
         model: cfg.apiKey ? cfg.model : null,
         store: store.driver,
         ephemeralRisk,
