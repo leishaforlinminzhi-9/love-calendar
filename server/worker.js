@@ -18,12 +18,18 @@ async function build(env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, executionCtx) {
     try {
       appPromise ??= build(env);
       const app = await appPromise;
       // a Worker always sits behind Cloudflare's edge, so no request counts as "local"
-      return await app.handle(request, { isLocal: false, ip: request.headers.get('cf-connecting-ip') || 'unknown' });
+      return await app.handle(request, {
+        isLocal: false,
+        ip: request.headers.get('cf-connecting-ip') || 'unknown',
+        country: request.cf?.country,
+        colo: request.cf?.colo,
+        waitUntil: (promise) => executionCtx.waitUntil(promise),
+      });
     } catch (err) {
       appPromise = null; // retry from scratch on the next request instead of caching a failure
       console.error('startup failed:', err.message);

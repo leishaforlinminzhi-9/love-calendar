@@ -149,7 +149,10 @@ function slotHTML(e) {
   const t = typeOf(e.type);
   let status = '';
   if (e.status === 'pending') status = '<span class="slot-status">生成中…</span>';
-  else if (e.status === 'error') status = '<span class="slot-status err">图标生成失败</span><button class="retry" data-retry>重试</button>';
+  else if (e.status === 'error') {
+    const again = (e.healTries ?? 0) < HEAL_MAX_TRIES ? ' · 稍后自动重试' : '';
+    status = `<span class="slot-status err">图标生成失败${again}</span><button class="retry" data-retry>重试</button>`;
+  }
   return (
     `<div class="slot" role="button" tabindex="0" data-slot="${e.slot}">${icon(e, 'card-icon')}` +
     `<div class="slot-body"><div class="slot-text">${esc(e.text)}</div>` +
@@ -526,22 +529,22 @@ function findTwin(entry) {
   return null;
 }
 
-function failure(err) {
+function failure(err, quiet = false) {
   if (err.code === 'not_configured' || err.code === 'no_backend') {
-    toastOnce('图像服务未连接，使用内置图标');
+    if (!quiet) toastOnce('图像服务未连接，使用内置图标');
     return { status: 'fallback' };
   }
   if (err.status === 401) {
     reauth();
-  } else if (err.code === 'access_code_required') {
-    toast(err.message || '后端不允许访问');
-  } else {
-    toast(err.message || '图标生成失败');
+  } else if (!quiet) {
+    // automatic retries stay silent: the card says it failed and when it will try again
+    if (err.code === 'access_code_required') toast(err.message || '后端不允许访问');
+    else toast(err.message || '图标生成失败');
   }
   return { status: 'error' };
 }
 
-async function generate(id, { fresh = false } = {}) {
+async function generate(id, { fresh = false, quiet = false } = {}) {
   const current = state.entries.get(id);
   if (!current) return;
   const token = Symbol();
@@ -565,7 +568,7 @@ async function generate(id, { fresh = false } = {}) {
         status: 'ready',
       };
     } catch (err) {
-      patch = failure(err);
+      patch = failure(err, quiet);
     }
   }
 
@@ -756,12 +759,70 @@ async function markAllDirty() {
   await store.save(all);
 }
 
-const wire = (e) => ({ date: e.date, slot: e.slot, kind: e.kind ?? 'love', text: e.text, type: e.type, deleted: e.deleted === true, createdAt: e.createdAt, updatedAt: e.updatedAt });
+const wire = (e) => ({ date: e.date, slot: e.slot, kind: e.kind ?? 'love', text: e.text, type: e.type, deleted: e.deleted === true, createdAt: e.createdAt, updatedAt: e.updatedAt, baseRev: e.rev ?? 0 });
 
-function applyRemote(r, touched) {
+// Last resort when a conflicting record cannot be kept in the calendar (that day is completely full): it is kept here and
+// included in "导出备份", so that no record is ever simply gone.
+function keepOverwritten(snap) {
+  let list = [];
+  try {
+    list = JSON.parse(ls.get('love.overwritten') || '[]');
+  } catch {}
+  list.push({ date: snap.date, text: snap.text, type: snap.type, at: new Date().toISOString() });
+  ls.set('love.overwritten', JSON.stringify(list.slice(-100)));
+}
+
+// The server refused to overwrite someone else's different content with ours, and sent theirs. Ours is not thrown away: it
+// moves to the next free place on that day (pushed on the next round), so that both records exist.
+function placeRescues(rescues, touched) {
+  let kept = 0;
+  for (const snap of rescues) {
+    let slot = -1;
+    for (let s = 0; s < SLOTS + EXTRA_SLOTS; s++) {
+      if (!liveEntry(`${snap.date}_${s}`)) {
+        slot = s;
+        break;
+      }
+    }
+    if (slot < 0) {
+      keepOverwritten(snap);
+      kept += 1;
+      continue;
+    }
+    const id = `${snap.date}_${slot}`;
+    const old = state.entries.get(id); // may be a tombstone
+    const entry = {
+      id, date: snap.date, slot, kind: 'love', text: snap.text, type: snap.type,
+      icon: snap.icon ?? null, iconKey: snap.iconKey ?? null, iconUploaded: snap.iconUploaded ?? false,
+      status: snap.status === 'pending' ? 'fallback' : snap.status ?? 'fallback',
+      deleted: false, dirty: true, rev: old?.rev,
+      createdAt: snap.createdAt, updatedAt: nextStamp(id),
+    };
+    state.entries.set(id, entry);
+    touched.set(id, entry);
+    kept += 1;
+  }
+  if (rescues.length) {
+    sync.again = true; // push the saved copies
+    toast(`有 ${kept} 条记录和别处的修改撞在同一格，已保留并另存到同一天的空位`);
+  }
+}
+
+// `force`: the server reported this entry as a conflict, so its version replaces ours even when ours looks newer (ours was
+// already set aside by placeRescues). `sentAt`: what we pushed this round (id -> updatedAt).
+function applyRemote(r, touched, { force = false, sentAt = new Map() } = {}) {
   const local = state.entries.get(r.id);
-  if (local && local.updatedAt > r.updatedAt) return; // our edit is newer: it is (or will be) pushed
-  if (local && local.updatedAt === r.updatedAt) {
+  if (!force && local && local.updatedAt > r.updatedAt) {
+    // our edit is newer and still unsent. If the remote entry is just our own previous push coming back, move our base
+    // forward; if it is someone else's, leave the base behind so that our next push is recognised as a conflict
+    if (sentAt.get(r.id) === r.updatedAt) {
+      local.rev = r.rev;
+      local.iconKey = r.iconKey ?? local.iconKey ?? null;
+      touched.set(local.id, local);
+    }
+    return;
+  }
+  if (!force && local && local.updatedAt === r.updatedAt) {
     local.rev = r.rev;
     local.iconKey = r.iconKey ?? local.iconKey ?? null;
     touched.set(local.id, local);
@@ -831,6 +892,7 @@ async function syncOnce() {
   }
 
   const sent = [...state.entries.values()].filter((e) => e.dirty);
+  const sentAt = new Map(sent.map((e) => [e.id, e.updatedAt]));
   const res = await api('/api/sync', { since: meta.cursor ?? 0, epoch: meta.epoch ?? null, changes: sent.map(wire) }, 60_000);
 
   const touched = new Map();
@@ -841,7 +903,15 @@ async function syncOnce() {
       touched.set(cur.id, cur);
     }
   }
-  for (const remote of res.entries) applyRemote(remote, touched);
+  // entries the server refused to overwrite because someone else wrote different content there: keep ours, then take theirs
+  const conflictIds = new Set(res.conflicts ?? []);
+  const rescues = [];
+  for (const id of conflictIds) {
+    const local = state.entries.get(id);
+    if (local && !local.deleted && (local.kind ?? 'love') === 'love' && sentAt.has(id)) rescues.push({ ...local });
+  }
+  for (const remote of res.entries) applyRemote(remote, touched, { force: conflictIds.has(remote.id), sentAt });
+  placeRescues(rescues, touched);
 
   if (res.resync) {
     // the server's data was reset since we last talked to it: push our full copy again
@@ -887,6 +957,117 @@ async function runSync() {
     sync.running = false;
   }
   setSyncStatus(outcome);
+  if (outcome === 'ok') setTimeout(() => healIcons(), 0); // fill in pictures that are missing, without blocking the sync
+}
+
+// ---------- healing: a record never stays stuck without its picture ----------
+// A picture is only decoration. A failed generation must not leave an entry broken for good, and nothing a visitor has
+// written is ever lost because a picture failed. Gaps are filled from anything already finished: first another entry on
+// this device, then the backend's stored copy (both free), and only then by generating, a few times with growing pauses.
+
+const HEAL_MAX_TRIES = 3;
+const HEAL_BACKOFF = [30_000, 5 * 60_000, 30 * 60_000]; // wait after the 1st, 2nd and 3rd failed automatic attempt
+let healing = false;
+
+async function healIcons({ force = false } = {}) {
+  if (healing || gatePromise || sync.status !== 'ok') return; // only while the backend is reachable
+  healing = true;
+  const changed = new Map();
+  try {
+    let generated = 0;
+    for (const candidate of live().filter((x) => !isBusy(x) && !x.icon && x.status !== 'pending')) {
+      const e = state.entries.get(candidate.id);
+      if (!e || e.icon || e.status === 'pending') continue;
+
+      // 1) an identical entry on this device already has a picture
+      const twin = findTwin(e);
+      if (twin) {
+        Object.assign(e, { icon: twin.icon, iconKey: twin.iconKey ?? e.iconKey ?? null, iconUploaded: twin.iconUploaded ?? false, status: 'ready' });
+        popKeys.add(e.id);
+        changed.set(e.id, e);
+        continue;
+      }
+
+      // 2) the backend may already hold a finished one (asking is free and never generates)
+      if (force || Date.now() >= (e.healCheckAt ?? 0)) {
+        try {
+          const res = await api('/api/generate', { text: e.text, type: e.type, cacheOnly: true }, 20_000);
+          Object.assign(e, {
+            icon: res.small ? res.image : await downscale(res.image),
+            iconKey: res.iconKey ?? e.iconKey ?? null,
+            iconUploaded: res.small === true,
+            status: 'ready',
+          });
+          popKeys.add(e.id);
+          changed.set(e.id, e);
+          continue;
+        } catch (err) {
+          if (err.status === 401) {
+            reauth();
+            break;
+          }
+          if (err.code === 'network') break; // offline again: try on the next sync
+          if (err.code === 'not_cached') {
+            e.healCheckAt = Date.now() + 2 * 60_000;
+            changed.set(e.id, e);
+          }
+        }
+      }
+
+      // 3) generate it (this part costs about $0.007): at most a few times, never in a tight loop
+      const tries = e.healTries ?? 0;
+      if (generated >= 2 || (!force && (tries >= HEAL_MAX_TRIES || Date.now() < (e.healNextAt ?? 0)))) continue;
+      generated += 1;
+      e.healTries = tries + 1;
+      e.healNextAt = Date.now() + HEAL_BACKOFF[Math.min(tries, HEAL_BACKOFF.length - 1)];
+      e.status = 'pending';
+      changed.set(e.id, e);
+      renderAll();
+      await generate(e.id, { quiet: true });
+    }
+  } finally {
+    healing = false;
+    if (changed.size) {
+      await store.save([...changed.values()]);
+      renderAll();
+      scheduleSync(300); // upload the pictures that were just found or made
+    }
+  }
+}
+
+// "Force refresh": throw away every cached failure and pull everything from the backend again. Records are never touched,
+// only their pictures' state and the sync bookkeeping.
+async function forceRefresh() {
+  toast('正在从后端重新同步…');
+  sync.missUntil.clear();
+  syncMeta.save({ ...syncMeta.load(), cursor: 0 }); // ask for everything, not only what changed
+  const all = [...state.entries.values()];
+  for (const e of all) {
+    if (e.status === 'error') e.status = 'fallback';
+    Object.assign(e, { healTries: 0, healNextAt: 0, healCheckAt: 0 });
+  }
+  await store.save(all);
+  renderAll();
+  await runSync();
+  await healIcons({ force: true });
+  await checkForNewVersion();
+}
+
+// A page can outlive a deployment by minutes (the host lets browsers reuse files for up to 10). Every deployment stamps its
+// build id into config.js and version.json; if the live id differs from the one this page was loaded with, reload once onto
+// a URL that cannot be cached.
+async function checkForNewVersion() {
+  const mine = window.LOVE_CONFIG?.BUILD;
+  if (!mine) return; // local development: nothing to compare
+  try {
+    const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const { build } = await res.json();
+    if (build && build !== mine && ss.get('love.reloadedFor') !== build) {
+      ss.set('love.reloadedFor', build); // never loop if the new files are somehow not served yet
+      location.replace(`${location.pathname}?v=${build}`);
+    }
+  } catch {}
 }
 
 // ---------- budget ----------
@@ -953,7 +1134,11 @@ function openSettings() {
 
 function exportData() {
   const entries = live().map(({ id, date, slot, kind, text, type, icon, createdAt, updatedAt }) => ({ id, date, slot, kind: kind ?? 'love', text, type, icon, createdAt, updatedAt }));
-  const payload = JSON.stringify({ app: 'love-calendar', version: 1, exportedAt: new Date().toISOString(), entries });
+  let overwritten = [];
+  try {
+    overwritten = JSON.parse(ls.get('love.overwritten') || '[]');
+  } catch {}
+  const payload = JSON.stringify({ app: 'love-calendar', version: 1, exportedAt: new Date().toISOString(), entries, overwritten });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
   a.download = `love-calendar-${todayKey()}.json`;
@@ -1025,7 +1210,7 @@ function bind() {
     if (ev.target.closest('[data-retry]')) {
       const slot = ev.target.closest('.slot').dataset.slot;
       const id = `${state.selected}_${slot}`;
-      state.entries.get(id).status = 'pending';
+      Object.assign(state.entries.get(id), { status: 'pending', healTries: 0, healNextAt: 0, healCheckAt: 0 });
       renderAll();
       generate(id);
       return;
@@ -1093,6 +1278,7 @@ function bind() {
     runSync();
   });
   $('syncNowBtn').addEventListener('click', runSync);
+  $('forceBtn').addEventListener('click', forceRefresh);
   $('lockBtn').addEventListener('click', () => {
     closeSheet($('settingsSheet'));
     reauth('已锁定，请输入访问口令');
@@ -1131,6 +1317,7 @@ function bind() {
       renderAll();
     }
     runSync();
+    checkForNewVersion();
   });
   window.addEventListener('online', runSync);
   // pick up what other devices wrote; skip while there is no backend / no passcode, a retry won't help
@@ -1142,6 +1329,8 @@ function bind() {
 // ---------- init ----------
 
 async function init() {
+  store.onPersistFailure(() => toast('本机存储失败：记录暂时只在内存里，请尽快「导出备份」'));
+  checkForNewVersion(); // a stale page reloads itself onto the latest version before doing anything else
   $('dow').innerHTML = DOW_MON_FIRST.map((d) => `<span>${d}</span>`).join('');
   buildChips();
 
@@ -1159,6 +1348,7 @@ async function init() {
   renderAll();
   renderSyncStatus();
   bind();
+  if (new URLSearchParams(location.search).has('debug')) window.__love = { state, runSync, healIcons, forceRefresh, checkForNewVersion, api };
   if (!store.persistent) toast('当前浏览器禁用了本地存储，刷新后记录会丢失');
 
   await ensureAccess(); // may show the passcode window first; nothing below runs until it is closed

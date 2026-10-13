@@ -1,5 +1,3 @@
-import { normalizeText } from './prompt.js';
-
 const DAY = 86_400_000;
 const ICON_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 export const ICON_KEY_RE = /^[a-f0-9]{64}$/;
@@ -22,7 +20,9 @@ function sanitize(raw, typeIds) {
   const kind = raw.kind === 'busy' ? 'busy' : 'love';
   if (kind === 'busy' && slot > 1) return null;
   const deleted = raw.deleted === true;
-  const text = deleted || kind === 'busy' ? '' : normalizeText(raw.text).slice(0, 60);
+  // keep the user's characters exactly as typed (full-width punctuation included); only whitespace is tidied.
+  // The icon cache key normalizes harder (NFKC) on its own, so look-alike spellings still share one picture.
+  const text = deleted || kind === 'busy' ? '' : String(raw.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
   if (!deleted && kind === 'love' && !text) return null;
   return {
     id: `${raw.date}_${slot}`,
@@ -38,8 +38,14 @@ function sanitize(raw, typeIds) {
   };
 }
 
-// Last-writer-wins per entry (by updatedAt). Deletions are tombstones so they propagate to other devices.
+// Sequential edits are last-writer-wins (by updatedAt); deletions are tombstones so they propagate to other devices.
+// But two people (or two devices, one of them offline) writing DIFFERENT content into the same entry is a conflict, and a
+// conflict must never silently destroy a record: the server keeps what it has, reports the entry as a conflict, and the
+// client that lost keeps its own version in another slot. A client states which server revision its edit was based on
+// (baseRev); an edit built on a stale revision is a conflict, an edit built on the current one is just the next edit.
 // Everything a sync needs from the store is a handful of batched calls, however many entries are pushed.
+
+const contentOf = (e) => (e.deleted ? 'deleted' : `${e.kind}|${e.type}|${e.text}`);
 export function createSync({ store, iconKeyFor, typeIds }) {
   let epochPromise = null;
 
@@ -63,13 +69,28 @@ export function createSync({ store, iconKeyFor, typeIds }) {
     const epoch = await ensureEpoch();
     const current = new Map((await store.entries.all()).map((e) => [e.id, e]));
 
-    // keep only changes that are newer than what is stored (a later change to the same id replaces an earlier one)
+    // keep only changes that may be applied; a change that would destroy someone else's different content is a conflict
     const accepted = new Map();
+    const conflicts = new Set();
     for (const raw of (Array.isArray(body?.changes) ? body.changes : []).slice(0, 2000)) {
       const change = sanitize(raw, typeIds);
       if (!change) continue;
+      const baseRev = Number(raw?.baseRev) || 0;
       const existing = current.get(change.id);
-      if (existing && existing.updatedAt >= change.updatedAt) continue;
+      if (existing) {
+        const differs = contentOf(existing) !== contentOf(change);
+        if (existing.updatedAt >= change.updatedAt) {
+          // an older write loses the last-writer rule, but if it carries content the stored version does not, it is a conflict
+          if (!change.deleted && differs) conflicts.add(change.id);
+          continue;
+        }
+        // newer write: fine when it removes something, replaces a tombstone, repeats the same content, or was built on the
+        // revision that is stored now; otherwise it was built on a stale revision: someone else's content would be lost
+        if (!existing.deleted && !change.deleted && differs && baseRev !== existing.rev) {
+          conflicts.add(change.id);
+          continue;
+        }
+      }
       accepted.set(change.id, change);
       current.set(change.id, change);
     }
@@ -96,7 +117,9 @@ export function createSync({ store, iconKeyFor, typeIds }) {
       epoch,
       resync: epochChanged,
       cursor: all.reduce((max, e) => Math.max(max, e.rev ?? 0), 0),
-      entries: all.filter((e) => (e.rev ?? 0) > since),
+      // a conflicting entry is always sent back, even if the client already "has" a newer revision of it
+      entries: all.filter((e) => (e.rev ?? 0) > since || conflicts.has(e.id)),
+      conflicts: [...conflicts],
     };
   }
 

@@ -24,12 +24,19 @@ jobs:
       - uses: actions/checkout@v4
 
       # Point the static frontend at the deployed backend (repo variable API_BASE, no trailing slash).
-      - name: Write runtime config
+      # Stamp this build into the files, so browsers can never keep using stale copies of them: the page compares its own
+      # build id with version.json and reloads itself when they differ, and every asset URL changes with each deployment.
+      - name: Write runtime config and stamp the build
         env:
           API_BASE: ${{ vars.API_BASE }}
+          BUILD: ${{ github.sha }}
         run: |
-          jq -n --arg api "$API_BASE" '"window.LOVE_CONFIG = { API_BASE: \($api | @json) };"' -r > frontend/config.js
-          cat frontend/config.js
+          jq -n --arg api "$API_BASE" --arg build "$BUILD" '"window.LOVE_CONFIG = { API_BASE: \($api | @json), BUILD: \($build | @json) };"' -r > frontend/config.js
+          printf '{"build":"%s"}\n' "$BUILD" > frontend/version.json
+          sed -i "s|src=\"config.js\"|src=\"config.js?v=$BUILD\"|; s|href=\"styles.css\"|href=\"styles.css?v=$BUILD\"|; s|src=\"app.js\"|src=\"app.js?v=$BUILD\"|" frontend/index.html
+          sed -i "s|from './store.js'|from './store.js?v=$BUILD'|; s|from './love-types.js'|from './love-types.js?v=$BUILD'|" frontend/app.js
+          cat frontend/config.js frontend/version.json
+          grep -c "v=$BUILD" frontend/index.html frontend/app.js
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

@@ -185,12 +185,35 @@ export function createApp({ env, store, ephemeralRisk = false }) {
   // before anything is awaited, otherwise two simultaneous requests could both pass the check and both pay.
   const pending = new Map(); // icon key -> Promise<{ image, prompt }>
 
-  function generateOnce(key, type, text, ip) {
+  // Only these reasons are kept for diagnosis: no text, no IP, just what failed and where it ran.
+  const FAILURE_CODES = new Set(['upstream_region', 'upstream_error', 'upstream_timeout']);
+
+  async function recordFailure(err, ctx) {
+    if (err.code === 'rate_limited' || err.code === 'daily_limit') return; // expected, not a failure
+    try {
+      const code = FAILURE_CODES.has(err.code) ? err.code : 'unexpected';
+      await Promise.all([
+        store.counters.add(`fail_${code}`, 1),
+        store.setJson('last_failure', {
+          at: new Date().toISOString(),
+          code,
+          status: err.status ?? null,
+          message: String(err.message).slice(0, 200),
+          country: ctx.country ?? null,
+          colo: ctx.colo ?? null,
+        }),
+      ]);
+    } catch (e) {
+      console.error('[image] could not record the failure:', e.message);
+    }
+  }
+
+  function generateOnce(key, type, text, ctx) {
     const running = pending.get(key);
     if (running) return running;
 
     const job = (async () => {
-      await checkRate(ip);
+      await checkRate(ctx.ip);
       const prompt = buildPrompt(type, text);
       const { image, usage } = await generateImage(prompt);
       const cost = await ledger.recordGeneration(cfg.model, usage);
@@ -200,8 +223,16 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       console.log(`[image] ${cfg.model} +$${cost.usd.toFixed(4)}${cost.estimated ? ' (estimated)' : ''} | total $${b.spentUsd.toFixed(4)} / $${b.warnAtUsd} warn line`);
       if (b.overBudget) console.warn(`BUDGET WARNING: spent $${b.spentUsd.toFixed(2)}, over the $${b.warnAtUsd} warn line`);
       return { image, prompt };
-    })().finally(() => pending.delete(key));
+    })()
+      .catch(async (err) => {
+        await recordFailure(err, ctx);
+        throw err;
+      })
+      .finally(() => pending.delete(key));
     pending.set(key, job);
+    // If the visitor's connection drops while this runs, the paid image must still be finished and kept, so that a retry
+    // finds it ready instead of paying again. (On a Worker, waitUntil keeps the job alive after the client has gone.)
+    ctx.waitUntil?.(job.catch(() => {}));
     return job;
   }
 
@@ -221,6 +252,7 @@ export function createApp({ env, store, ephemeralRisk = false }) {
         store: store.driver,
         ephemeralRisk,
         budget: await ledger.status(),
+        lastFailure: await store.getJson('last_failure').catch(() => null),
       });
     }
 
@@ -251,13 +283,20 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       requireAccess(request, ctx);
       if (!cfg.apiKey) throw new HttpError(503, 'not_configured', '后端未配置图像 API');
 
-      const { text, type, fresh } = await readJson(request);
+      const { text, type, fresh, cacheOnly } = await readJson(request);
       const clean = normalizeText(text);
       if (!clean || clean.length > 80) throw new HttpError(400, 'bad_text', '内容需为 1–80 字');
       if (!TYPE_IDS.includes(type)) throw new HttpError(400, 'bad_type', '未知的类型');
 
       // Reuse an icon that was already paid for, unless the user explicitly asked for a new one.
       const key = await iconKey(type, clean);
+      if (cacheOnly === true) {
+        // "is there already a finished icon for this?": answers from what is stored, never generates, costs nothing
+        const small = await store.icons.get(key).catch(() => null);
+        const image = small ?? (await store.images.get(key).catch(() => null));
+        if (image && (small || RAW_IMAGE_RE.test(image))) return json(request, 200, { image, cached: true, small: Boolean(small), iconKey: key });
+        throw new HttpError(404, 'not_cached', '还没有现成的图标');
+      }
       if (fresh !== true) {
         // the small icon (uploaded by a browser) is preferred; the raw image kept at generation time is the fallback
         const small = await store.icons.get(key).catch(() => null);
@@ -268,7 +307,7 @@ export function createApp({ env, store, ephemeralRisk = false }) {
         }
       }
 
-      const { image, prompt } = await generateOnce(key, type, clean, ctx.ip);
+      const { image, prompt } = await generateOnce(key, type, clean, ctx);
       return json(request, 200, { image, prompt, cached: false, small: false, iconKey: key, budget: await ledger.status() });
     }
 
@@ -277,7 +316,7 @@ export function createApp({ env, store, ephemeralRisk = false }) {
 
   // ctx: { isLocal: boolean, ip: string } supplied by the runtime-specific entry point
   async function handle(request, ctx = {}) {
-    const context = { isLocal: ctx.isLocal === true, ip: ctx.ip || 'unknown' };
+    const context = { isLocal: ctx.isLocal === true, ip: ctx.ip || 'unknown', country: ctx.country, colo: ctx.colo, waitUntil: ctx.waitUntil };
     try {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(request) });
       await ready;
