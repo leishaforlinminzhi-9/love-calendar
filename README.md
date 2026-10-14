@@ -208,7 +208,7 @@ frontend/   静态前端（直接部署到 Pages）
   store.js        本地 IndexedDB 封装
   sw.js           Service Worker：断网时用上次存下来的页面（联网时永远以网络为准）
   manifest.webmanifest  安装到主屏幕所需的清单（名称、颜色、图标）
-  icon.svg / icon-*.png / apple-touch-icon.png  应用图标
+  icon-*.png / apple-touch-icon.png  应用图标（3D 软萌风，和日历里的类型图标同一套风格）
 server/     后端（一份业务代码，两个入口）
   app.js          与运行环境无关的请求处理：同步、图标、生成、限流（标准 Request → Response）
   index.js        Node 入口：本机运行、托管前端静态文件
