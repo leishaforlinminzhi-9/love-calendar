@@ -707,7 +707,7 @@ async function ensureAccess() {
   if (staticHostWithoutBackend() || accessCode.get()) return;
   let health;
   try {
-    health = await api('/api/health', null, 8000);
+    health = await api('/api/health', null, 20_000); // generous: through a proxy the first answer can take a few seconds
   } catch {
     return; // backend unreachable: stay local, syncing retries on its own
   }
@@ -1235,7 +1235,7 @@ function openSettings() {
   state.health = undefined;
   renderApiStatus();
   openSheet($('settingsSheet'));
-  checkHealth(8000);
+  checkHealth(20_000);
 }
 
 function exportData() {
