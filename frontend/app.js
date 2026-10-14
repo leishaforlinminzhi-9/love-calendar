@@ -239,7 +239,7 @@ function renderStats() {
   $('statsCard').innerHTML =
     '<h3>本月</h3>' +
     (total
-      ? `<p class="stats-sum">${total} 条 · 最多：${rows[0].label}</p>`
+      ? `<p class="stats-sum">${total} 条</p>`
       : '<p class="stats-sum">暂无记录</p>') +
     `<div class="bar">${rows.map((t) => `<i style="--c:${t.color};flex-grow:${counts.get(t.id)}" title="${t.label}"></i>`).join('')}</div>` +
     (total ? `<div class="legend">${rows.map((t) => `<span style="--c:${t.color}">${t.label} ${counts.get(t.id)}</span>`).join('')}</div>` : '') +
