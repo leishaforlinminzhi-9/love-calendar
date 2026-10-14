@@ -1034,6 +1034,7 @@ async function forceRefresh() {
   await runSync();
   await healIcons({ force: true });
   await checkForNewVersion();
+  navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {}); // pick up a newer sw.js too
 }
 
 // A page can outlive a deployment by minutes (the host lets browsers reuse files for up to 10). Every deployment stamps its
@@ -1324,6 +1325,8 @@ async function init() {
   renderAll();
   renderSyncStatus();
   bind();
+  // lets the app open like an installed one, also with no network (see sw.js); a failure here changes nothing else
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (new URLSearchParams(location.search).has('debug')) window.__love = { state, runSync, healIcons, forceRefresh, checkForNewVersion, api };
   if (!store.persistent) toast('当前浏览器禁用了本地存储，刷新后记录会丢失');
 
