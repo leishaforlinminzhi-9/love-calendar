@@ -5,6 +5,7 @@
 //   entries.all() / entries.putMany(list)   diary entries (metadata only)
 //   icons.get / getMany / put               small icon images, kept apart from the entries
 //   counters.*                              atomic numbers: revisions, spend ledger, rate limits
+//   visits.report / visits.recent           the anonymous visit log (when, for how long, which kind of device)
 //
 // Calls are batched on purpose: a Cloudflare Worker may make only 50 outgoing requests per invocation.
 
@@ -93,6 +94,40 @@ export function createUpstashStore({ url, token }) {
       },
       async put(key, dataUrl) {
         await cmd('SET', `love:raw:${key}`, dataUrl);
+      },
+    },
+
+    // anonymous visit log: one small hash per page visit (kept 90 days), newest ids in a sorted set capped at 2000
+    visits: {
+      // idempotent: the first report creates the record, later ones only raise the seconds
+      async report(id, { device, seconds }, now) {
+        const key = `love:visit:${id}`;
+        await pipeline([
+          ['HSETNX', key, 'at', now],
+          ['HSETNX', key, 'device', device],
+          ['HSET', key, 'seconds', seconds, 'last', now],
+          ['EXPIRE', key, 90 * 86_400],
+          ['ZADD', 'love:visits', 'NX', now, id],
+          ['ZREMRANGEBYRANK', 'love:visits', 0, -2001],
+        ]);
+      },
+      async recent(limit) {
+        const ids = await cmd('ZREVRANGE', 'love:visits', 0, limit - 1);
+        if (!ids?.length) return [];
+        const rows = await pipeline(ids.map((id) => ['HGETALL', `love:visit:${id}`]));
+        // HGETALL answers [field, value, field, value, ...]
+        const toObject = (flat) => {
+          if (!Array.isArray(flat)) return flat ?? {};
+          const o = {};
+          for (let i = 0; i + 1 < flat.length; i += 2) o[flat[i]] = flat[i + 1];
+          return o;
+        };
+        return rows
+          .map((flat, i) => {
+            const r = toObject(flat);
+            return r.at ? { id: ids[i], at: Number(r.at), device: r.device, seconds: Number(r.seconds) || 0, last: Number(r.last) || Number(r.at) } : null;
+          })
+          .filter(Boolean);
       },
     },
 

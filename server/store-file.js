@@ -22,9 +22,11 @@ export function createFileStore(dir) {
   mkdirSync(join(dir, 'cache'), { recursive: true });
   const docFile = (name) => join(dir, `${name}.json`);
   const entriesFile = join(dir, 'entries.json');
+  const visitsFile = join(dir, 'visits.json');
   const countersFile = join(dir, 'counters.json');
 
   const entries = readJsonFile(entriesFile, {});
+  const visits = readJsonFile(visitsFile, {});
   const counters = readJsonFile(countersFile, {});
   const windows = new Map(); // rate-limit windows live in memory only: they are meant to be short-lived
   const saveCounters = () => writeJsonFile(countersFile, counters);
@@ -74,6 +76,24 @@ export function createFileStore(dir) {
       },
       async put(key, dataUrl) {
         writeFileSync(join(dir, 'cache', `${key}.txt`), dataUrl);
+      },
+    },
+
+    // anonymous visit log: when a page was opened, for how long it was in view, which kind of device
+    visits: {
+      async report(id, { device, seconds }, now) {
+        const v = visits[id] ?? (visits[id] = { at: now, device });
+        v.seconds = seconds;
+        v.last = now;
+        const ids = Object.keys(visits);
+        if (ids.length > 2000) for (const old of ids.sort((a, b) => visits[a].at - visits[b].at).slice(0, ids.length - 2000)) delete visits[old];
+        writeJsonFile(visitsFile, visits);
+      },
+      async recent(limit) {
+        return Object.entries(visits)
+          .map(([id, v]) => ({ id, at: v.at, device: v.device, seconds: v.seconds ?? 0, last: v.last ?? v.at }))
+          .sort((a, b) => b.at - a.at)
+          .slice(0, limit);
       },
     },
 

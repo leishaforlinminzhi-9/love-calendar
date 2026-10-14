@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#FAF4EA" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#17120E" media="(prefers-color-scheme: dark)">
+  <title>访问记录</title>
+  <link rel="icon" href="icon-192.png" type="image/png">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .page { max-width: 640px; margin: 0 auto; padding: calc(18px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)); }
+    h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+    .sub { margin: 0 0 18px; font-size: 13px; color: var(--ink-2); }
+    .keyrow { display: flex; gap: 8px; margin-bottom: 16px; }
+    .keyrow input { flex: 1; min-width: 0; }
+    .keyrow button { flex: none; padding: 0 16px; border-radius: 14px; font-weight: 600; background: var(--accent); color: var(--on-accent); }
+    .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+    .tile { padding: 12px 8px; border-radius: 14px; background: var(--surface-2); text-align: center; }
+    .tile b { display: block; font-family: var(--mono); font-size: 20px; font-weight: 600; }
+    .tile span { font-size: 11px; color: var(--ink-2); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; font-size: 12px; font-weight: 600; color: var(--ink-2); padding: 6px 4px; }
+    td { padding: 9px 4px; border-top: 1px solid var(--line); }
+    td.dur { font-family: var(--mono); white-space: nowrap; }
+    .msg { padding: 14px; border-radius: 14px; background: var(--surface-2); color: var(--ink-2); font-size: 14px; }
+    .msg.err { color: var(--danger); }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>访问记录</h1>
+    <p class="sub">什么时候打开、在前台停留了多久、什么设备。不含地址、姓名和日记内容。自己的设备（用 <code>?me</code> 标记）不记录。</p>
+
+    <form class="keyrow" id="keyForm">
+      <input id="key" type="password" placeholder="访问记录密钥（VISITS_KEY）" autocomplete="off">
+      <button type="submit">查看</button>
+    </form>
+
+    <div id="out"></div>
+  </main>
+
+  <script src="config.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const bases = String(window.LOVE_CONFIG?.API_BASE ?? '').split(',').map((b) => b.trim().replace(/\/+$/, '')).filter(Boolean);
+    if (!bases.length) bases.push(''); // same origin (a local run)
+    const DEVICE = { phone: '手机', tablet: '平板', desktop: '电脑' };
+
+    async function load(key) {
+      let failure;
+      for (const base of bases) {
+        try {
+          const res = await fetch(`${base}/api/visits?limit=500`, { headers: { 'x-visits-key': key }, cache: 'no-store', signal: AbortSignal.timeout(20000) });
+          if (res.status === 404) throw Object.assign(new Error('密钥不对，或后端还没有设置 VISITS_KEY'), { final: true });
+          if (!res.ok) throw new Error(`请求失败（HTTP ${res.status}）`);
+          return (await res.json()).visits;
+        } catch (err) {
+          failure = err;
+          if (err.final) break;
+        }
+      }
+      throw failure;
+    }
+
+    const clock = (ms) => new Date(ms).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+    function length(sec) {
+      if (sec < 60) return `${sec} 秒`;
+      const m = Math.floor(sec / 60);
+      return m < 60 ? `${m} 分 ${sec % 60} 秒` : `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
+    }
+
+    function show(visits) {
+      const out = $('out');
+      out.textContent = '';
+      if (!visits.length) {
+        out.innerHTML = '<p class="msg">还没有记录。从这个功能上线起，每次有人打开页面才会记下来。</p>';
+        return;
+      }
+      const dayStart = new Date().setHours(0, 0, 0, 0);
+      const today = visits.filter((v) => v.at >= dayStart).length;
+      const week = visits.filter((v) => v.at >= Date.now() - 7 * 86_400_000).length;
+      const avg = Math.round(visits.reduce((n, v) => n + v.seconds, 0) / visits.length);
+      const tiles = document.createElement('div');
+      tiles.className = 'tiles';
+      for (const [value, label] of [[visits.length, '共打开'], [today, '今天'], [week, '近 7 天'], [length(avg), '平均停留']]) {
+        const tile = document.createElement('div');
+        tile.className = 'tile';
+        const b = document.createElement('b');
+        b.textContent = value;
+        const span = document.createElement('span');
+        span.textContent = label;
+        tile.append(b, span);
+        tiles.append(tile);
+      }
+      const table = document.createElement('table');
+      table.innerHTML = '<thead><tr><th>打开时间</th><th>设备</th><th>停留</th></tr></thead>';
+      const body = document.createElement('tbody');
+      for (const v of visits) {
+        const row = body.insertRow();
+        row.insertCell().textContent = clock(v.at);
+        row.insertCell().textContent = DEVICE[v.device] ?? v.device;
+        const cell = row.insertCell();
+        cell.className = 'dur';
+        cell.textContent = v.seconds ? length(v.seconds) : '不足 1 秒';
+      }
+      table.append(body);
+      out.append(tiles, table);
+    }
+
+    async function go() {
+      const key = $('key').value.trim();
+      if (!key) return;
+      $('out').innerHTML = '<p class="msg">读取中…</p>';
+      try {
+        const visits = await load(key);
+        try { localStorage.setItem('love.visitsKey', key); } catch {}
+        show(visits);
+      } catch (err) {
+        $('out').innerHTML = '';
+        const p = document.createElement('p');
+        p.className = 'msg err';
+        p.textContent = err.message || '读取失败';
+        $('out').append(p);
+      }
+    }
+
+    $('keyForm').addEventListener('submit', (ev) => { ev.preventDefault(); go(); });
+    try { $('key').value = localStorage.getItem('love.visitsKey') || ''; } catch {}
+    if ($('key').value) go();
+  </script>
+</body>
+</html>

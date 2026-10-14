@@ -1462,6 +1462,53 @@ function watchHostBadge() {
   new MutationObserver(sync).observe(document.body, { childList: true });
 }
 
+// ---------- visit log ----------
+// Anonymous: when this page was opened, for how long it was in view (time in the foreground), and the kind of device.
+// Nothing else is sent: no address, no name, nothing from the diary, and the visit number is made up fresh on every open,
+// so two visits cannot be linked. Not recorded on the owner's own devices (open the site once with ?me to mark one, ?me=0
+// to unmark it), nor while developing locally (?track forces it, for testing).
+function startVisitLog() {
+  const q = new URLSearchParams(location.search);
+  if (q.has('me')) {
+    if (q.get('me') === '0') ls.remove('love.owner');
+    else ls.set('love.owner', '1');
+  }
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  if ((local && !q.has('track')) || q.has('debug') || ls.get('love.owner') || staticHostWithoutBackend()) return;
+
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => (b % 36).toString(36)).join('') + Date.now().toString(36).slice(-4);
+  const touch = navigator.maxTouchPoints > 0;
+  const device = touch ? (Math.min(screen.width, screen.height) < 700 ? 'phone' : 'tablet') : 'desktop';
+
+  let total = 0; // milliseconds in view so far, not counting the stretch that is still running
+  let since = document.visibilityState === 'visible' ? performance.now() : null; // when the current stretch began
+  const stop = () => {
+    if (since === null) return;
+    total += performance.now() - since;
+    since = null;
+  };
+  const report = () => {
+    const url = `${apiBase()}/api/visit`;
+    const body = JSON.stringify({ id, device, seconds: Math.round((total + (since === null ? 0 : performance.now() - since)) / 1000) });
+    // text/plain keeps this a "simple" request: no pre-flight, which a beacon sent while the page is closing could not wait for
+    const sent = navigator.sendBeacon?.(url, new Blob([body], { type: 'text/plain;charset=UTF-8' }));
+    if (!sent) fetch(url, { method: 'POST', body, headers: { 'content-type': 'text/plain;charset=UTF-8' }, keepalive: true }).catch(() => {});
+  };
+
+  report(); // opened
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      stop();
+      report(); // left (switched app, locked the phone, closed the tab): the total so far
+    } else if (since === null) since = performance.now();
+  });
+  window.addEventListener('pagehide', () => {
+    if (since === null) return; // already reported when it went to the background
+    stop();
+    report();
+  });
+}
+
 // ---------- init ----------
 
 async function init() {
@@ -1486,6 +1533,7 @@ async function init() {
   renderSyncStatus();
   bind();
   watchHostBadge();
+  startVisitLog();
   // lets the app open like an installed one, also with no network (see sw.js); a failure here changes nothing else
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (new URLSearchParams(location.search).has('debug')) window.__love = { state, runSync, healIcons, forceRefresh, checkForNewVersion, api };

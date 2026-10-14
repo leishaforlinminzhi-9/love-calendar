@@ -56,6 +56,8 @@ export function createApp({ env, store, ephemeralRisk = false }) {
     ratePerMin: Number(env.RATE_PER_MIN) || 6,
     dailyLimit: Number(env.DAILY_LIMIT) || 200,
     origins: (env.ALLOWED_ORIGINS || '*').split(',').map((s) => s.trim()).filter(Boolean),
+    // secret that opens the owner-only visit list (/api/visits); without it that route does not exist
+    visitsKey: env.VISITS_KEY || '',
   };
 
   let extraParams = {};
@@ -81,7 +83,7 @@ export function createApp({ env, store, ephemeralRisk = false }) {
     const origin = request.headers.get('origin');
     const headers = {
       'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
-      'access-control-allow-headers': 'content-type, x-access-code',
+      'access-control-allow-headers': 'content-type, x-access-code, x-visits-key',
       'access-control-max-age': '86400',
       vary: 'Origin',
     };
@@ -257,6 +259,27 @@ export function createApp({ env, store, ephemeralRisk = false }) {
         // lets a visitor see which country the backend thinks they are in
         via: { country: ctx.country ?? null, colo: ctx.colo ?? null },
       });
+    }
+
+    // ----- visit log: anonymous (when, how long, which kind of device); no address, name or diary text is ever stored -----
+
+    if (pathname === '/api/visit' && method === 'POST') {
+      const minute = Math.floor(Date.now() / 60_000);
+      if ((await store.counters.hit(`visit:${ctx.ip}:${minute}`, 120)) > 30) throw new HttpError(429, 'rate_limited', '请求过于频繁');
+      const body = await readJson(request, 512);
+      const id = String(body.id ?? '');
+      if (!/^[a-z0-9]{10,20}$/.test(id)) throw new HttpError(400, 'bad_visit', '无效的访问编号');
+      const device = ['phone', 'tablet', 'desktop'].includes(body.device) ? body.device : 'desktop';
+      const seconds = Math.min(86_400, Math.max(0, Math.round(Number(body.seconds) || 0)));
+      await store.visits.report(id, { device, seconds }, Date.now());
+      return json(request, 200, { ok: true });
+    }
+
+    // owner only: needs the VISITS_KEY secret, and does not exist at all while none is set
+    if (pathname === '/api/visits' && method === 'GET') {
+      if (!cfg.visitsKey || !safeEqual(request.headers.get('x-visits-key') ?? '', cfg.visitsKey)) throw new HttpError(404, 'not_found', '没有这个接口');
+      const limit = Math.min(500, Math.max(1, Number(new URL(request.url).searchParams.get('limit')) || 200));
+      return json(request, 200, { visits: await store.visits.recent(limit) });
     }
 
     // ----- sync: diary entries (metadata) + their small icons -----

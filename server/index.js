@@ -84,7 +84,7 @@ function readBody(req) {
 
 async function handleApi(req, res, url) {
   const headers = new Headers();
-  for (const name of ['origin', 'content-type', 'x-access-code']) {
+  for (const name of ['origin', 'content-type', 'x-access-code', 'x-visits-key']) {
     if (req.headers[name]) headers.set(name, String(req.headers[name]));
   }
   // behind a proxy the first X-Forwarded-For entry is the caller; directly connected loopback means "this machine"
