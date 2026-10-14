@@ -253,7 +253,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   color: #17171A; /* always dark: the chip background is a pastel in both themes */
   background: linear-gradient(145deg, var(--from), var(--to));
 }
-.slot-status.err { color: var(--danger); font-weight: 600; }
 
 .slot.add {
   min-height: 76px;
@@ -276,7 +275,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .slot.add .add-sub { display: block; margin-top: 2px; font-size: 13px; line-height: 1.35; color: var(--ink-2); font-weight: 400; }
 .slot.add.disabled { opacity: 0.5; pointer-events: none; }
 
-.retry { padding: 2px 8px; border-radius: 7px; background: var(--surface); color: var(--danger); font-weight: 600; border: 1px solid var(--line); }
 
 /* ---------- stats ---------- */
 

@@ -100,12 +100,6 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
 }
-let notified = false;
-function toastOnce(msg) {
-  if (notified) return;
-  notified = true;
-  toast(msg);
-}
 
 // ---------- rendering ----------
 
@@ -147,12 +141,8 @@ function renderCalendar() {
 
 function slotHTML(e) {
   const t = typeOf(e.type);
-  let status = '';
-  if (e.status === 'pending') status = '<span class="slot-status">生成中…</span>';
-  else if (e.status === 'error') {
-    const again = (e.healTries ?? 0) < HEAL_MAX_TRIES ? ' · 稍后自动重试' : '';
-    status = `<span class="slot-status err">图标生成失败${again}</span><button class="retry" data-retry>重试</button>`;
-  }
+  // a picture that could not be made is not an error the visitor needs to see: the built-in icon simply stays
+  const status = e.status === 'pending' ? '<span class="slot-status">生成中…</span>' : '';
   return (
     `<div class="slot" role="button" tabindex="0" data-slot="${e.slot}">${icon(e, 'card-icon')}` +
     `<div class="slot-body"><div class="slot-text">${esc(e.text)}</div>` +
@@ -529,22 +519,15 @@ function findTwin(entry) {
   return null;
 }
 
-function failure(err, quiet = false) {
-  if (err.code === 'not_configured' || err.code === 'no_backend') {
-    if (!quiet) toastOnce('图像服务未连接，使用内置图标');
-    return { status: 'fallback' };
-  }
-  if (err.status === 401) {
-    reauth();
-  } else if (!quiet) {
-    // automatic retries stay silent: the card says it failed and when it will try again
-    if (err.code === 'access_code_required') toast(err.message || '后端不允许访问');
-    else toast(err.message || '图标生成失败');
-  }
-  return { status: 'error' };
+// Whatever the reason (image service unreachable, region refused, over the limit, timeout), the entry keeps its built-in
+// icon and nothing is shown about it. The reason is still kept in Settings → last error, and healing tries again later.
+// Only a missing passcode is acted on, because that is something the visitor can fix.
+function failure(err) {
+  if (err.status === 401) reauth();
+  return { status: 'fallback' };
 }
 
-async function generate(id, { fresh = false, quiet = false } = {}) {
+async function generate(id, { fresh = false } = {}) {
   const current = state.entries.get(id);
   if (!current) return;
   const token = Symbol();
@@ -568,7 +551,7 @@ async function generate(id, { fresh = false, quiet = false } = {}) {
         status: 'ready',
       };
     } catch (err) {
-      patch = failure(err, quiet);
+      patch = failure(err);
     }
   }
 
@@ -1023,7 +1006,7 @@ async function healIcons({ force = false } = {}) {
       e.status = 'pending';
       changed.set(e.id, e);
       renderAll();
-      await generate(e.id, { quiet: true });
+      await generate(e.id);
     }
   } finally {
     healing = false;
@@ -1207,14 +1190,6 @@ function bind() {
       if (slot !== null) openEntry(state.selected, slot);
       return;
     }
-    if (ev.target.closest('[data-retry]')) {
-      const slot = ev.target.closest('.slot').dataset.slot;
-      const id = `${state.selected}_${slot}`;
-      Object.assign(state.entries.get(id), { status: 'pending', healTries: 0, healNextAt: 0, healCheckAt: 0 });
-      renderAll();
-      generate(id);
-      return;
-    }
     const slot = ev.target.closest('.slot');
     if (slot) openEntry(state.selected, Number(slot.dataset.slot));
   });
@@ -1338,9 +1313,10 @@ async function init() {
   state.view = { y: t.getFullYear(), m: t.getMonth() };
 
   for (const e of await store.loadAll()) {
-    if (e.status === 'pending') {
-      // a generation that was cut off by a reload; let the user retry instead of silently spending credits
-      e.status = 'error';
+    if (e.status === 'pending' || e.status === 'error') {
+      // a generation that was cut off by a reload, or a failure stored by an older version: show the built-in icon;
+      // healing fills in the picture later (a few automatic tries, never in a loop)
+      e.status = 'fallback';
       store.save(e);
     }
     state.entries.set(e.id, e);
