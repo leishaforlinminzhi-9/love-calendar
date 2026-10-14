@@ -67,6 +67,15 @@ export const LOVE_TYPES = [
     keywords: ['做饭', '煮', '饭', '菜', '汤', '吃', '早餐', '午餐', '晚餐', '宵夜', '咖啡', '奶茶', '甜点', '烤', '面', '粥', '带了', 'cook', 'meal', 'soup', 'dinner', 'breakfast', 'coffee', 'milk tea', 'snack', 'bake', 'food'],
   },
   {
+    // fixedSubject: this category is always drawn as its own picture, whatever the text says (a hotel name, a city, a room)
+    id: 'hotel', label: '酒店', emoji: '🛌', hint: '过夜 · 旅行 · 住一晚', fixedSubject: true,
+    from: '#F6E6D8', to: '#DDB48D', color: '#C48F66',
+    colorName: 'warm caramel latte brown', accentName: 'butter yellow',
+    motif: 'two cute round blob characters sleeping peacefully in a cozy bed under one fluffy blanket, cuddled up and hugging each other, eyes closed, with a tiny floating heart and a small crescent moon above them',
+    theme: 'a night away together at a hotel (sleeping in each other\'s arms)',
+    keywords: ['酒店', '宾馆', '旅馆', '民宿', '客栈', '开房', '入住', '过夜', '住一晚', '同床', '抱着睡', '一起睡', '搂着睡', '度假村', '套房', '大床', 'hotel', 'motel', 'airbnb', 'resort', 'overnight', 'stay the night', 'suite'],
+  },
+  {
     id: 'other', label: '其他', emoji: '💗', hint: '不好归类',
     from: '#FFE1E1', to: '#FF9C9C', color: '#FF6B6B',
     colorName: 'warm coral red', accentName: 'cream white',

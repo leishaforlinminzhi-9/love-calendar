@@ -40,7 +40,7 @@ function clean(text) {
 export function buildPrompt(typeId, text) {
   const t = typeOf(typeId);
   const moment = clean(text);
-  const subject = moment
+  const subject = moment && !t.fixedSubject
     ? `Moment: "${moment}" (category: ${t.theme}).\n` +
       'Subject: draw the ONE most recognisable concrete object from this moment, the thing it actually mentions (the real food, gift, item or place), ' +
       'as a single simple, charming object, optionally with one tiny heart or sparkle. Never swap it for a different object.\n' +
