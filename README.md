@@ -210,7 +210,7 @@ Pages 免费版需要**公开仓库**。`.env` 已在 `.gitignore` 里，密钥�
 
 - **停留多久**指页面在前台的时间：切到别的 App、锁屏、关页面都会停止计时，并在那一刻上报一次。页面被系统直接杀掉时可能没有最后一次上报。
 - **自己的设备不记**：在这台设备上用 `https://你的网址/?me` 打开一次，之后这台设备就不再记录；`?me=0` 取消。本机开发（localhost）和带 `?debug` 的页面也不记。
-- **怎么看**：给后端加一个密钥 `VISITS_KEY`（Cloudflare → Workers & Pages → love-calendar-api → Settings → Variables and secrets → Add → 类型选 Secret），然后打开 `https://你的网址/visits.html`，输入这个密钥就能看到列表和汇总。没设置密钥时，列表接口根本不存在（返回 404），别人看不到；记录本身照常在记。
+- **怎么看**：打开 `https://你的网址/visits.html`，直接就是列表和汇总，不需要密钥。**知道这个网址的人都能看到**（内容只有时间、时长和设备类型）。想加一道锁的话，给后端设一个密钥 `VISITS_KEY`（Cloudflare → Workers & Pages → love-calendar-api → Settings → Variables and secrets → Add → Secret），页面会自动出现输入框。
 - 写入接口 `/api/visit` 做了限流（每个地址每分钟 30 次）和严格校验，只接受编号、设备类型和秒数。
 
 ## 访问保护
@@ -243,7 +243,7 @@ frontend/   静态前端（直接部署到 Pages）
   store.js        本地 IndexedDB 封装
   sw.js           Service Worker：断网时用上次存下来的页面（联网时永远以网络为准）
   manifest.webmanifest  安装到主屏幕所需的清单（名称、颜色、图标）
-  visits.html     访问记录列表页（需要 VISITS_KEY 才能读到数据）
+  visits.html     访问记录列表页（默认公开；设了 VISITS_KEY 才需要密钥）
   icon-*.png / apple-touch-icon.png  应用图标（3D 软萌风，和日历里的类型图标同一套风格）
 server/     后端（一份业务代码，两个入口）
   app.js          与运行环境无关的请求处理：同步、图标、生成、限流（标准 Request → Response）

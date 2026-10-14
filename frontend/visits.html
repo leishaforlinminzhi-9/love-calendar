@@ -14,6 +14,7 @@
     h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
     .sub { margin: 0 0 18px; font-size: 13px; color: var(--ink-2); }
     .keyrow { display: flex; gap: 8px; margin-bottom: 16px; }
+    .keyrow[hidden] { display: none; }
     .keyrow input { flex: 1; min-width: 0; }
     .keyrow button { flex: none; padding: 0 16px; border-radius: 14px; font-weight: 600; background: var(--accent); color: var(--on-accent); }
     .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
@@ -31,9 +32,9 @@
 <body>
   <main class="page">
     <h1>访问记录</h1>
-    <p class="sub">什么时候打开、在前台停留了多久、什么设备。不含地址、姓名和日记内容。自己的设备（用 <code>?me</code> 标记）不记录。</p>
+    <p class="sub">什么时候打开、在前台停留了多久、什么设备。自己的设备（用 <code>?me</code> 标记）不记录。</p>
 
-    <form class="keyrow" id="keyForm">
+    <form class="keyrow" id="keyForm" hidden>
       <input id="key" type="password" placeholder="访问记录密钥（VISITS_KEY）" autocomplete="off">
       <button type="submit">查看</button>
     </form>
@@ -52,8 +53,8 @@
       let failure;
       for (const base of bases) {
         try {
-          const res = await fetch(`${base}/api/visits?limit=500`, { headers: { 'x-visits-key': key }, cache: 'no-store', signal: AbortSignal.timeout(20000) });
-          if (res.status === 404) throw Object.assign(new Error('密钥不对，或后端还没有设置 VISITS_KEY'), { final: true });
+          const res = await fetch(`${base}/api/visits?limit=500`, { headers: key ? { 'x-visits-key': key } : {}, cache: 'no-store', signal: AbortSignal.timeout(20000) });
+          if (res.status === 401) throw Object.assign(new Error(key ? '密钥不对' : '这个后端设置了访问记录密钥，请输入'), { final: true, needKey: true });
           if (!res.ok) throw new Error(`请求失败（HTTP ${res.status}）`);
           return (await res.json()).visits;
         } catch (err) {
@@ -109,16 +110,17 @@
       out.append(tiles, table);
     }
 
+    // the list is open unless the backend has a VISITS_KEY: only then is the key form shown
     async function go() {
       const key = $('key').value.trim();
-      if (!key) return;
       $('out').innerHTML = '<p class="msg">读取中…</p>';
       try {
         const visits = await load(key);
-        try { localStorage.setItem('love.visitsKey', key); } catch {}
+        if (key) { try { localStorage.setItem('love.visitsKey', key); } catch {} }
         show(visits);
       } catch (err) {
         $('out').innerHTML = '';
+        if (err.needKey) $('keyForm').hidden = false;
         const p = document.createElement('p');
         p.className = 'msg err';
         p.textContent = err.message || '读取失败';
@@ -128,7 +130,7 @@
 
     $('keyForm').addEventListener('submit', (ev) => { ev.preventDefault(); go(); });
     try { $('key').value = localStorage.getItem('love.visitsKey') || ''; } catch {}
-    if ($('key').value) go();
+    go();
   </script>
 </body>
 </html>

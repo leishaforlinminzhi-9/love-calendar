@@ -56,7 +56,7 @@ export function createApp({ env, store, ephemeralRisk = false }) {
     ratePerMin: Number(env.RATE_PER_MIN) || 6,
     dailyLimit: Number(env.DAILY_LIMIT) || 200,
     origins: (env.ALLOWED_ORIGINS || '*').split(',').map((s) => s.trim()).filter(Boolean),
-    // secret that opens the owner-only visit list (/api/visits); without it that route does not exist
+    // optional password for the visit list (/api/visits); without it the list is open to whoever has the link
     visitsKey: env.VISITS_KEY || '',
   };
 
@@ -275,9 +275,9 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       return json(request, 200, { ok: true });
     }
 
-    // owner only: needs the VISITS_KEY secret, and does not exist at all while none is set
+    // the visit list: open to whoever has the link, unless a VISITS_KEY secret is set, which then becomes the password
     if (pathname === '/api/visits' && method === 'GET') {
-      if (!cfg.visitsKey || !safeEqual(request.headers.get('x-visits-key') ?? '', cfg.visitsKey)) throw new HttpError(404, 'not_found', '没有这个接口');
+      if (cfg.visitsKey && !safeEqual(request.headers.get('x-visits-key') ?? '', cfg.visitsKey)) throw new HttpError(401, 'unauthorized', '需要访问记录密钥');
       const limit = Math.min(500, Math.max(1, Number(new URL(request.url).searchParams.get('limit')) || 200));
       return json(request, 200, { visits: await store.visits.recent(limit) });
     }
