@@ -29,3 +29,8 @@ BUDGET_WARN_USD = "50"
 # ("Country, region, or territory not supported"). Pinning it to a supported region fixes that for every visitor.
 [placement]
 region = "aws:us-east-1"
+
+# Keep a log of the requests the backend answers (time, path, status, country and data centre), shown in the dashboard
+# under the Worker's "Observability" tab. Free plan: kept for a few days. Request bodies (the diary) are not logged.
+[observability]
+enabled = true
