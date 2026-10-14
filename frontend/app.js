@@ -1426,6 +1426,14 @@ function bind() {
   }, 60_000);
 }
 
+// While a host badge floats over the bottom-right corner (it is a direct child of <body>, and disappears when the visitor
+// dismisses it), the stylesheet reserves room at the bottom so no button of ours can end up underneath it.
+function watchHostBadge() {
+  const sync = () => document.documentElement.classList.toggle('has-host-badge', Boolean(document.getElementById('nl-badge-frame')));
+  sync();
+  new MutationObserver(sync).observe(document.body, { childList: true });
+}
+
 // ---------- init ----------
 
 async function init() {
@@ -1449,6 +1457,7 @@ async function init() {
   renderAll();
   renderSyncStatus();
   bind();
+  watchHostBadge();
   // lets the app open like an installed one, also with no network (see sw.js); a failure here changes nothing else
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (new URLSearchParams(location.search).has('debug')) window.__love = { state, runSync, healIcons, forceRefresh, checkForNewVersion, api };
