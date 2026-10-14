@@ -1,4 +1,4 @@
-import { LOVE_TYPES, TYPE_IDS, typeOf, classify } from './love-types.js';
+import { LOVE_TYPES, TYPE_IDS, typeOf, classify, maxLengthOf, tidyText } from './love-types.js';
 import * as store from './store.js';
 
 const SLOTS = 2;
@@ -143,11 +143,21 @@ function slotHTML(e) {
   const t = typeOf(e.type);
   // a picture that could not be made is not an error the visitor needs to see: the built-in icon simply stays
   const status = e.status === 'pending' ? '<span class="slot-status">生成中…</span>' : '';
+  const redeem = e.slot >= SLOTS ? '<span class="type-chip redeem">兑现</span>' : '';
+  if (t.multiline) {
+    // 回音: a poem or a longer text gets its own layout, line breaks kept, set in a serif face
+    return (
+      `<div class="slot echo" role="button" tabindex="0" data-slot="${e.slot}" style="--c:${t.color}">` +
+      `<div class="echo-head">${icon(e, 'card-icon')}` +
+      `<span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>${redeem}${status}</div>` +
+      `<blockquote class="echo-text">${esc(e.text)}</blockquote></div>`
+    );
+  }
   return (
     `<div class="slot" role="button" tabindex="0" data-slot="${e.slot}">${icon(e, 'card-icon')}` +
     `<div class="slot-body"><div class="slot-text">${esc(e.text)}</div>` +
     `<div class="slot-meta"><span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>` +
-    `${e.slot >= SLOTS ? '<span class="type-chip redeem">兑现</span>' : ''}${status}</div></div></div>`
+    `${redeem}${status}</div></div></div>`
   );
 }
 
@@ -323,7 +333,17 @@ function syncEntryForm() {
   const text = $('entryText').value.trim();
   document.querySelectorAll('#typeChips .chip').forEach((c) => c.setAttribute('aria-checked', String(c.dataset.type === draft.type)));
   $('typeNote').textContent = draft.locked ? `${t.label}` : `自动识别：${t.label}`;
-  $('entryCount').textContent = `${$('entryText').value.length}/60`;
+  // the limit, the size of the box and the hint follow the type: a 回音 may be a whole poem, the rest is one short line
+  const max = maxLengthOf(draft.type);
+  const field = $('entryText');
+  // until the visitor picks a type themselves, typing is allowed up to the longest limit: a text past the short limit is
+  // recognised as a 回音 (see classify), so it must be possible to type it
+  field.maxLength = draft.locked ? max : Math.max(...LOVE_TYPES.map((x) => maxLengthOf(x.id)));
+  field.rows = t.multiline ? 9 : 3;
+  field.classList.toggle('echo-input', Boolean(t.multiline));
+  field.placeholder = t.multiline ? '一首诗、一段歌词，或一段想说的话。可以换行。' : draft.example;
+  $('entryCount').textContent = `${field.value.length}/${max}`;
+  $('entryCount').classList.toggle('over', field.value.trim().length > max);
 
   const prev = draft.entry;
   const unchanged = prev && prev.text === text && prev.type === draft.type;
@@ -339,12 +359,11 @@ function openEntry(date, slot) {
   const entry = existing && !busy ? existing : null;
   const extra = slot >= SLOTS;
   const { m, d, y } = parse(date);
-  draft = { date, slot, entry, busy, type: entry?.type ?? 'other', locked: Boolean(entry) };
+  draft = { date, slot, entry, busy, type: entry?.type ?? 'other', locked: Boolean(entry), example: example(date, slot) };
 
   $('entryTitle').textContent = entry ? '编辑' : busy ? '补记' : extra ? '兑现' : '新记录';
   $('entryDate').textContent = `${m + 1}月${d}日 周${WEEKDAYS[new Date(y, m, d).getDay()]} · ${extra ? '兑现' : `第 ${slot + 1} 条`}`;
   $('entryText').value = entry?.text ?? '';
-  $('entryText').placeholder = example(date, slot);
   $('regenBtn').hidden = !entry;
   $('deleteBtn').hidden = !(entry || busy);
   $('deleteBtn').textContent = busy ? '取消积攒' : '删除';
@@ -354,10 +373,17 @@ function openEntry(date, slot) {
 }
 
 async function commitEntry({ regen = false } = {}) {
-  const text = $('entryText').value.trim();
-  if (!text) return $('entryText').focus();
+  const typed = $('entryText').value.trim();
+  if (!typed) return $('entryText').focus();
 
   const { date, slot, entry: prev, type } = draft;
+  const max = maxLengthOf(type);
+  if (typed.length > max) {
+    // never cut someone's words silently: say what to do instead
+    toast(`这个类型最多 ${max} 字（现在 ${typed.length} 字），长一点的话请选「回音」`);
+    return;
+  }
+  const text = tidyText(type, typed);
   const id = `${date}_${slot}`;
   const changed = !prev || prev.text !== text || prev.type !== type;
   const old = state.entries.get(id); // may be a tombstone of an earlier deletion
@@ -551,8 +577,9 @@ const norm = (s) => s.normalize('NFKC').replace(/\s+/g, ' ').trim();
 
 function findTwin(entry) {
   const text = norm(entry.text);
+  const shared = Boolean(typeOf(entry.type).fixedSubject); // hotel / 回音: one picture for all of them, whatever the text
   for (const e of state.entries.values()) {
-    if (e.id !== entry.id && !e.deleted && e.icon && e.status === 'ready' && e.type === entry.type && norm(e.text) === text) return e;
+    if (e.id !== entry.id && !e.deleted && e.icon && e.status === 'ready' && e.type === entry.type && (shared || norm(e.text) === text)) return e;
   }
   return null;
 }
@@ -579,7 +606,7 @@ async function generate(id, { fresh = false } = {}) {
     patch = { icon: twin.icon, iconKey: twin.iconKey ?? null, iconUploaded: twin.iconUploaded ?? false, status: 'ready' };
   } else {
     try {
-      const res = await api('/api/generate', { text: current.text, type: current.type, fresh });
+      const res = await api('/api/generate', { text: current.text.slice(0, 80), type: current.type, fresh });
       updateBudget(res.budget);
       // `small` = the server handed back an icon that is already downscaled (and already stored there)
       patch = {
@@ -1012,7 +1039,7 @@ async function healIcons({ force = false } = {}) {
       // 2) the backend may already hold a finished one (asking is free and never generates)
       if (force || Date.now() >= (e.healCheckAt ?? 0)) {
         try {
-          const res = await api('/api/generate', { text: e.text, type: e.type, cacheOnly: true }, 20_000);
+          const res = await api('/api/generate', { text: e.text.slice(0, 80), type: e.type, cacheOnly: true }, 20_000);
           if (res.image) {
             Object.assign(e, {
               icon: res.small ? res.image : await downscale(res.image),
@@ -1258,14 +1285,15 @@ function sanitizeEntry(raw) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw?.date) || !Number.isInteger(slot) || slot < 0 || slot >= SLOTS + EXTRA_SLOTS) return null;
   if (kind === 'busy' && slot >= SLOTS) return null; // only the two daily slots can be banked
   if (kind === 'love' && (typeof raw.text !== 'string' || !raw.text.trim())) return null;
+  const importedType = kind === 'love' && TYPE_IDS.includes(raw.type) ? raw.type : 'other';
   const okIcon = kind === 'love' && typeof raw.icon === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(raw.icon);
   return {
     id: `${raw.date}_${slot}`,
     date: raw.date,
     slot,
     kind,
-    text: kind === 'busy' ? '' : raw.text.trim().slice(0, 60),
-    type: kind === 'love' && TYPE_IDS.includes(raw.type) ? raw.type : 'other',
+    text: kind === 'busy' ? '' : tidyText(importedType, raw.text),
+    type: importedType,
     icon: okIcon ? raw.icon : null,
     iconKey: null, // the server assigns it on the next sync; the icon is then uploaded from here
     iconUploaded: kind === 'busy', // a banked placeholder has no icon to upload

@@ -1,3 +1,5 @@
+import { tidyText } from '../frontend/love-types.js';
+
 const DAY = 86_400_000;
 const ICON_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 export const ICON_KEY_RE = /^[a-f0-9]{64}$/;
@@ -20,9 +22,11 @@ function sanitize(raw, typeIds) {
   const kind = raw.kind === 'busy' ? 'busy' : 'love';
   if (kind === 'busy' && slot > 1) return null;
   const deleted = raw.deleted === true;
-  // keep the user's characters exactly as typed (full-width punctuation included); only whitespace is tidied.
+  const type = kind === 'love' && typeIds.includes(raw.type) ? raw.type : 'other';
+  // keep the user's characters exactly as typed (full-width punctuation included); only whitespace is tidied, and how
+  // much is allowed depends on the type (a poem may be much longer and keeps its line breaks).
   // The icon cache key normalizes harder (NFKC) on its own, so look-alike spellings still share one picture.
-  const text = deleted || kind === 'busy' ? '' : String(raw.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const text = deleted || kind === 'busy' ? '' : tidyText(type, raw.text);
   if (!deleted && kind === 'love' && !text) return null;
   return {
     id: `${raw.date}_${slot}`,
@@ -30,7 +34,7 @@ function sanitize(raw, typeIds) {
     slot,
     kind,
     text,
-    type: kind === 'love' && typeIds.includes(raw.type) ? raw.type : 'other',
+    type,
     deleted,
     createdAt: Number(raw.createdAt) || updatedAt,
     // a device with a wrong clock must not be able to win every conflict forever

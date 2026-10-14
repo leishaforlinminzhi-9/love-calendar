@@ -25,8 +25,11 @@ async function sha256Hex(text) {
 
 // Identifies one generated icon: (type, text, prompt version) only. The model is deliberately not part of it,
 // so switching models later still reuses every image that was already paid for.
+// A type with a fixed subject (hotel, poem) always draws the same picture whatever the text says, so all of its entries
+// share one image: it is generated once and every later entry reuses it for free.
 export function iconKey(type, text) {
-  return sha256Hex(`v${PROMPT_VERSION}|${type}|${normalizeText(text)}`);
+  const subject = typeOf(type).fixedSubject ? 'fixed' : normalizeText(text);
+  return sha256Hex(`v${PROMPT_VERSION}|${type}|${subject}`);
 }
 
 function clean(text) {

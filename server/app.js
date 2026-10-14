@@ -1,4 +1,4 @@
-import { TYPE_IDS } from '../frontend/love-types.js';
+import { TYPE_IDS, typeOf } from '../frontend/love-types.js';
 import { buildPrompt, iconKey, normalizeText } from './prompt.js';
 import { createLedger } from './spend.js';
 import { createSync, isIconDataUrl, ICON_KEY_RE, MAX_ICON_BYTES } from './sync.js';
@@ -287,9 +287,11 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       if (!cfg.apiKey) throw new HttpError(503, 'not_configured', '后端未配置图像 API');
 
       const { text, type, fresh, cacheOnly } = await readJson(request);
-      const clean = normalizeText(text);
-      if (!clean || clean.length > 80) throw new HttpError(400, 'bad_text', '内容需为 1–80 字');
       if (!TYPE_IDS.includes(type)) throw new HttpError(400, 'bad_type', '未知的类型');
+      // a type with a fixed subject ignores the text (a long poem is fine); every other type is drawn from it
+      const fixed = Boolean(typeOf(type).fixedSubject);
+      const clean = fixed ? normalizeText(text).slice(0, 80) || type : normalizeText(text);
+      if (!clean || clean.length > 80) throw new HttpError(400, 'bad_text', '内容需为 1–80 字');
 
       // Reuse an icon that was already paid for, unless the user explicitly asked for a new one.
       const key = await iconKey(type, clean);

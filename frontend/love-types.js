@@ -76,8 +76,10 @@ export const LOVE_TYPES = [
     keywords: ['酒店', '宾馆', '旅馆', '民宿', '客栈', '开房', '入住', '过夜', '住一晚', '同床', '抱着睡', '一起睡', '搂着睡', '度假村', '套房', '大床', 'hotel', 'motel', 'airbnb', 'resort', 'overnight', 'stay the night', 'suite'],
   },
   {
-    // fixedSubject: always drawn as a pen writing, whatever the poem is about
-    id: 'poem', label: '写诗', emoji: '🖋️', hint: '诗 · 歌词 · 亲笔写的话', fixedSubject: true,
+    // fixedSubject: always drawn as a pen writing, whatever the text says (and one shared picture for all of them).
+    // multiline + a much larger limit: a poem, a lyric or a longer letter, shown in its own layout.
+    // The id stays 'poem' because saved entries refer to it; only the name the visitor sees changed.
+    id: 'poem', label: '回音', emoji: '🖋️', hint: '诗 · 歌词 · 长一点的话', fixedSubject: true, multiline: true, maxLength: 600,
     from: '#F3E0F3', to: '#D79AD9', color: '#C26BC8',
     colorName: 'soft orchid plum', accentName: 'butter yellow',
     motif: 'a chunky glossy fountain pen with a golden nib, in the middle of writing a flowing wavy line of abstract cursive strokes (no readable letters) across a sheet of cream paper, with one tiny heart at the end of the line',
@@ -96,15 +98,42 @@ export const LOVE_TYPES = [
 
 export const TYPE_IDS = LOVE_TYPES.map((t) => t.id);
 
+// Most entries are one short line; a type may allow much more (and keep its line breaks).
+export const DEFAULT_MAX_LENGTH = 60;
+
+
 const BY_ID = new Map(LOVE_TYPES.map((t) => [t.id, t]));
 
 export function typeOf(id) {
   return BY_ID.get(id) ?? BY_ID.get('other');
 }
 
+export const maxLengthOf = (id) => typeOf(id).maxLength ?? DEFAULT_MAX_LENGTH;
+
+// The one place that decides how stored text looks, used by the browser and the server alike. Whitespace is tidied, the
+// characters themselves are never rewritten. Single-line types collapse every run of whitespace (line breaks included);
+// multiline types keep their line breaks (at most one blank line in a row) and only tidy the spaces within each line.
+// The result is cut at the type's limit; callers that must not lose text check the length first.
+export function tidyText(typeId, text) {
+  const raw = String(text ?? '');
+  const max = maxLengthOf(typeId);
+  if (!typeOf(typeId).multiline) return raw.replace(/\s+/g, ' ').trim().slice(0, max);
+  return raw
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[^\S\n]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, max);
+}
+
 // Keyword scoring; ties resolve by the order above. No match -> 'other'.
 export function classify(text) {
-  const s = String(text ?? '').toLowerCase();
+  // a long text, or three or more lines, can only be a poem / letter: it would not fit any other type anyway
+  const raw = String(text ?? '');
+  if (raw.trim().length > DEFAULT_MAX_LENGTH || raw.split('\n').filter((l) => l.trim()).length >= 3) return 'poem';
+  const s = raw.toLowerCase();
   let best = 'other';
   let bestScore = 0;
   for (const t of LOVE_TYPES) {

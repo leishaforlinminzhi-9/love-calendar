@@ -25,6 +25,7 @@
   --badge-room: 0px;        /* extra bottom space while the host floats a badge over the corner (see .has-host-badge) */
   --spring: cubic-bezier(0.34, 1.25, 0.64, 1);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", "STSong", "SimSun", "Iowan Old Style", Georgia, serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
@@ -493,3 +494,16 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 /* Some hosts (Netlify's free plan) float a small "Powered by" badge over the bottom-right corner of every page. It is not
    ours to remove, but our own controls must never end up under it: while it exists, the page and the sheets end higher. */
 .has-host-badge { --badge-room: 68px; }
+
+/* 回音: a poem or a longer text, in its own layout: a small header, then the text set in a serif face with its line breaks */
+.slot.echo { display: block; padding: 12px 14px 14px; }
+.echo-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+.echo-head .icon.card-icon { width: 36px; border-radius: 11px; }
+.echo-text {
+  margin: 12px 2px 0 6px; padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--c, var(--line-strong));
+  font-family: var(--serif); font-size: 17px; line-height: 1.95; letter-spacing: 0.05em; font-weight: 400;
+  white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink);
+}
+textarea.echo-input { font-family: var(--serif); font-size: 17px; line-height: 1.9; letter-spacing: 0.04em; }
+.count.over { color: var(--danger); font-weight: 600; }
