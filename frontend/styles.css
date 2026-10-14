@@ -484,3 +484,7 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 
 /* technical detail of the latest failed request: small and allowed to wrap */
 .last-error { max-width: 62%; text-align: right; font-family: var(--mono); font-size: 11px !important; line-height: 1.4; overflow-wrap: anywhere; }
+
+/* connection diagnosis: plain text the visitor can copy and send */
+.diag { margin: 0; padding: 12px 16px; border-top: 1px solid var(--line); font: 11px/1.55 var(--mono); color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+.diag[hidden], .group-row[hidden] { display: none; }

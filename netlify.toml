@@ -1,0 +1,22 @@
+# A second front door that works from mainland China.
+#
+# *.workers.dev (the backend) and *.pages.dev are not reachable from mainland China; *.netlify.app is. This file makes
+# a Netlify site serve the very same static frontend and forward /api/* to the Cloudflare Worker, so the page and the
+# backend share one reachable address. The Worker still does all the work (database, image generation, fixed region).
+#
+# Setup: Netlify -> Add new site -> Import an existing project -> this GitHub repo -> Deploy (no settings to change).
+
+[build]
+  publish = "frontend"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://love-calendar-api.linmz21.workers.dev/api/:splat"
+  status = 200
+  force = true
+
+# the service worker file must always be re-checked, or an update could be missed
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"

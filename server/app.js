@@ -253,6 +253,9 @@ export function createApp({ env, store, ephemeralRisk = false }) {
         ephemeralRisk,
         budget: await ledger.status(),
         lastFailure: await store.getJson('last_failure').catch(() => null),
+        // where this very request entered the network (country and data-centre code only, never an address):
+        // lets a visitor see which country the backend thinks they are in
+        via: { country: ctx.country ?? null, colo: ctx.colo ?? null },
       });
     }
 

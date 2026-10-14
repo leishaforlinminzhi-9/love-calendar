@@ -438,12 +438,38 @@ async function deleteEntry() {
 
 // ---------- icon generation ----------
 
+// API_BASE may list several addresses of the SAME backend, separated by commas (for example one reachable from mainland
+// China and one that is not). A request that cannot connect is repeated on the next address, and the address that worked
+// last is tried first from then on. All addresses share one database, so nothing else depends on which one answered.
+const apiBases = () =>
+  String(window.LOVE_CONFIG?.API_BASE ?? '')
+    .split(',')
+    .map((b) => b.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+
 function apiBase() {
-  return String(window.LOVE_CONFIG?.API_BASE ?? '').replace(/\/+$/, '');
+  const list = apiBases();
+  const last = ls.get('love.apiBase');
+  return list.includes(last) ? last : (list[0] ?? '');
 }
 
+const tryOrder = () => {
+  const list = apiBases();
+  if (!list.length) return ['']; // same origin (a local run)
+  const first = apiBase();
+  return [first, ...list.filter((b) => b !== first)];
+};
+
+const hostOf = (base) => {
+  try {
+    return new URL(base).host;
+  } catch {
+    return base || location.host;
+  }
+};
+
 // GitHub Pages only serves static files: with no API_BASE configured there is no backend to call at all.
-const staticHostWithoutBackend = () => !apiBase() && /\.github\.io$/.test(location.hostname);
+const staticHostWithoutBackend = () => !apiBases().length && /\.github\.io$/.test(location.hostname);
 
 // AbortSignal.timeout() is missing in older browsers (before Safari 16): without this fallback every request would
 // throw before it is even sent, and look like "can't reach the backend".
@@ -470,16 +496,28 @@ async function api(path, body, timeoutMs = 120_000, method = body ? 'POST' : 'GE
 
   const startedAt = performance.now();
   let res;
-  try {
-    res = await fetch(apiBase() + path, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: timeoutSignal(timeoutMs),
-    });
-  } catch (err) {
-    noteError(method, path, `${err?.name ?? 'Error'}: ${String(err?.message ?? err).slice(0, 70)}`, startedAt);
-    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+  let failed = null;
+  for (const base of tryOrder()) {
+    try {
+      res = await fetch(base + path, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: timeoutSignal(timeoutMs),
+      });
+      failed = null;
+      if (base && apiBases().length > 1 && ls.get('love.apiBase') !== base) ls.set('love.apiBase', base);
+      break;
+    } catch (err) {
+      failed = err;
+      const where = apiBases().length > 1 ? `${hostOf(base)} ` : '';
+      noteError(method, path, `${where}${err?.name ?? 'Error'}: ${String(err?.message ?? err).slice(0, 70)}`, startedAt);
+      const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+      if (timedOut && path === '/api/generate') break; // the backend may have received it: never pay for it twice
+    }
+  }
+  if (failed) {
+    const timedOut = failed?.name === 'TimeoutError' || failed?.name === 'AbortError';
     throw Object.assign(new Error(timedOut ? '生成超时，请重试' : '无法连接后端'), { code: 'network' });
   }
   const data = await res.json().catch(() => ({}));
@@ -690,7 +728,7 @@ async function reauth(message = '口令无效或已更改，请重新输入') {
 // and pushed; the server answers with everything newer than our cursor. Per entry the latest updatedAt wins.
 
 const syncMeta = {
-  key: () => `love.sync:${apiBase()}`,
+  key: () => `love.sync:${apiBases()[0] ?? ''}`, // the first address: stable, whichever mirror answers
   load() {
     try {
       return JSON.parse(ls.get(this.key())) ?? {};
@@ -1037,6 +1075,90 @@ async function forceRefresh() {
   navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {}); // pick up a newer sw.js too
 }
 
+// One tap that explains why this device cannot reach the backend. Every step is timed and shows its exact error, so
+// "blocked address" can be told apart from "no internet at all", "refused by the server" and "something in the browser".
+async function diagnose() {
+  const out = $('diagOut');
+  const copy = $('diagCopyBtn');
+  out.hidden = false;
+  copy.hidden = true;
+  $('diagBtn').disabled = true;
+  const lines = [];
+  const show = () => (out.textContent = lines.join('\n'));
+  const probe = async (label, fn) => {
+    const t0 = performance.now();
+    let ok = false;
+    try {
+      const detail = await fn();
+      lines.push(`✓ ${label} · ${Math.round(performance.now() - t0)}ms${detail ? ' · ' + detail : ''}`);
+      ok = true;
+    } catch (err) {
+      lines.push(`✗ ${label} · ${Math.round(performance.now() - t0)}ms · ${err?.name ?? 'Error'}: ${String(err?.message ?? err).slice(0, 80)}`);
+    }
+    show();
+    return ok;
+  };
+
+  const standalone = window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
+  lines.push(
+    'CALENDAR 连接诊断',
+    `${new Date().toISOString()} · 版本 ${(window.LOVE_CONFIG?.BUILD ?? 'dev').slice(0, 7)}`,
+    navigator.userAgent,
+    `在线 ${navigator.onLine ? '是' : '否'} · 主屏幕模式 ${standalone ? '是' : '否'} · 本机存储 ${store.persistent ? '正常' : '不可用'}`,
+    '',
+  );
+  show();
+
+  // does this device reach Cloudflare at all? (opaque answer is enough: it only has to connect)
+  const cloudflare = await probe('能连上 Cloudflare', async () => {
+    await fetch('https://www.cloudflare.com/cdn-cgi/trace', { mode: 'no-cors', cache: 'no-store', signal: timeoutSignal(12_000) });
+  });
+
+  let reachable = 0;
+  const bases = apiBases().length ? apiBases() : [''];
+  for (const base of bases) {
+    const name = base ? hostOf(base) : '本机';
+    const health = await probe(`${name} · 健康检查`, async () => {
+      const res = await fetch(`${base}/api/health`, { cache: 'no-store', signal: timeoutSignal(15_000) });
+      const data = await res.json().catch(() => ({}));
+      const via = data.via?.country ? ` · 后端看到你在 ${data.via.country}${data.via.colo ? ' (' + data.via.colo + ')' : ''}` : '';
+      if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { name: 'HTTP' });
+      return `HTTP ${res.status}${via}`;
+    });
+    // the request the app really uses for syncing: a JSON POST, which the browser pre-flights across origins
+    const channel = await probe(`${name} · 同步通道`, async () => {
+      const res = await fetch(`${base}/api/icons/get`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"keys":[]}',
+        cache: 'no-store',
+        signal: timeoutSignal(15_000),
+      });
+      return `HTTP ${res.status}${res.status === 401 ? '（需要口令，但已连通）' : ''}`;
+    });
+    if (health && channel) reachable += 1;
+  }
+
+  lines.push('');
+  if (reachable === bases.length) lines.push('结论：所有后端地址都能连上。如果应用里仍然失败，把这段结果发给开发者。');
+  else if (reachable > 0) lines.push(`结论：有 ${bases.length - reachable} 个后端地址连不上，但至少有 ${reachable} 个正常，应用会自动改用能连上的那个。`);
+  else if (cloudflare) lines.push('结论：这台设备的网络是通的，但所有后端地址都连不上，说明这个网络拦了这些地址。');
+  else lines.push('结论：这台设备连 Cloudflare 都连不上，可能没有网络，或网络限制很严。');
+  show();
+  copy.hidden = false;
+  $('diagBtn').disabled = false;
+}
+
+async function copyDiagnosis() {
+  const text = $('diagOut').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('已复制');
+  } catch {
+    toast('长按上面的文字，选择全部后复制');
+  }
+}
+
 // A page can outlive a deployment by minutes (the host lets browsers reuse files for up to 10). Every deployment stamps its
 // build id into config.js and version.json; if the live id differs from the one this page was loaded with, reload once onto
 // a URL that cannot be cached.
@@ -1255,6 +1377,8 @@ function bind() {
   });
   $('syncNowBtn').addEventListener('click', runSync);
   $('forceBtn').addEventListener('click', forceRefresh);
+  $('diagBtn').addEventListener('click', diagnose);
+  $('diagCopyBtn').addEventListener('click', copyDiagnosis);
   $('lockBtn').addEventListener('click', () => {
     closeSheet($('settingsSheet'));
     reauth('已锁定，请输入访问口令');
