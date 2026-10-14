@@ -76,6 +76,15 @@ export const LOVE_TYPES = [
     keywords: ['酒店', '宾馆', '旅馆', '民宿', '客栈', '开房', '入住', '过夜', '住一晚', '同床', '抱着睡', '一起睡', '搂着睡', '度假村', '套房', '大床', 'hotel', 'motel', 'airbnb', 'resort', 'overnight', 'stay the night', 'suite'],
   },
   {
+    // fixedSubject: always drawn as a pen writing, whatever the poem is about
+    id: 'poem', label: '写诗', emoji: '🖋️', hint: '诗 · 歌词 · 亲笔写的话', fixedSubject: true,
+    from: '#F3E0F3', to: '#D79AD9', color: '#C26BC8',
+    colorName: 'soft orchid plum', accentName: 'butter yellow',
+    motif: 'a chunky glossy fountain pen with a golden nib, in the middle of writing a flowing wavy line of abstract cursive strokes (no readable letters) across a sheet of cream paper, with one tiny heart at the end of the line',
+    theme: 'writing a poem or a handwritten note by hand',
+    keywords: ['写诗', '作诗', '诗', '歌词', '十四行', '押韵', '手写', '亲笔', 'poem', 'poetry', 'verse', 'lyrics', 'sonnet', 'haiku'],
+  },
+  {
     id: 'other', label: '其他', emoji: '💗', hint: '不好归类',
     from: '#FFE1E1', to: '#FF9C9C', color: '#FF6B6B',
     colorName: 'warm coral red', accentName: 'cream white',
