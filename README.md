@@ -181,13 +181,13 @@ Pages 免费版需要**公开仓库**。`.env` 已在 `.gitignore` 里，密钥�
 
 ### 5. 让中国大陆也能连上后端（推荐）
 
-后端在 `*.workers.dev` 上，**中国大陆连不上**（实测 8 个大陆探测点全部超时或被劫持；`*.pages.dev` 也一样）。而 `*.netlify.app`、GitHub Pages 本身、Upstash 在大陆都能连上。办法是再开一个 Netlify 入口：它托管同一份前端，并把 `/api/*` 转发给 Cloudflare 上的后端（配置都在 [`netlify.toml`](netlify.toml) 里）。后端本身不动，数据库、生图、固定的美国东部机房都照旧。
+后端在 `*.workers.dev` 上，**中国大陆连不上**（实测 8 个大陆探测点全部超时或被劫持；`*.pages.dev` 也一样）。加上 Netlify 入口后，同样 8 个探测点（电信 / 联通 / 腾讯云 / 阿里云）全部能打开页面，并拿到后端的真实回答。而 `*.netlify.app`、GitHub Pages 本身、Upstash 在大陆都能连上。办法是再开一个 Netlify 入口：它托管同一份前端，并把 `/api/*` 转发给 Cloudflare 上的后端（配置都在 [`netlify.toml`](netlify.toml) 里）。后端本身不动，数据库、生图、固定的美国东部机房都照旧。
 
 1. 打开 [app.netlify.com](https://app.netlify.com)，用 GitHub 账号登录（免费，不用绑卡）
 2. **Add new site → Import an existing project → GitHub →** 选这个仓库 → 直接点 **Deploy**（不用改任何设置）
-3. 部署完得到一个网址 `https://xxx.netlify.app`，这就是新入口（Site configuration → Change site name 可以改成好记的名字）
+3. 部署完得到一个网址 `https://xxx.netlify.app`，这就是新入口（Site configuration → Change site name 可以改成好记的名字）。本仓库当前的入口是 `https://frabjous-boba-2c325c.netlify.app`；如果打开后一直要求登录 Netlify，是站点被设成了私有，到项目的 Visibility 里把 Production 改成 Public
 4. 国内的朋友（和你自己）用这个网址，在设置里点「连接诊断」确认
-5. 想让 GitHub Pages 那个网址也自动选能用的：仓库 Settings → Secrets and variables → Actions → Variables，把 `API_BASE` 改成 `https://xxx.netlify.app,https://love-calendar-api.linmz21.workers.dev`（用逗号写多个地址）
+5. 想让 GitHub Pages 那个网址也自动选能用的：仓库 Settings → Secrets and variables → Actions → Variables，把 `API_BASE` 改成 `https://xxx.netlify.app,https://love-calendar-api.linmz21.workers.dev`（用逗号写多个地址；Netlify 放第一个，因为它在大陆和国外都能连上，workers.dev 在大陆连不上，放前面会白白等到超时）
 
 多个地址是同一个后端的不同入口：请求连不上时会自动换下一个地址重试，之后优先用上次成功的那个，所有地址共用同一个数据库。
 
