@@ -247,8 +247,22 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .slot:active { transform: scale(0.985); }
 .slot-body { flex: 1; min-width: 0; }
 .slot-text { font-size: 16px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
-.text-link { color: inherit; font-weight: 600; text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
-.text-link:active { opacity: 0.6; }
+/* a web address in an entry: a button under the text, in the same look as the app's other main buttons */
+.slot-links { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+.slot-links + .slot-meta { margin-top: 10px; }
+.slot.echo .slot-links { margin: 14px 2px 0 6px; }
+.link-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 40px; padding: 0 18px;
+  border-radius: 14px;
+  font-size: 15px; font-weight: 600; letter-spacing: 0.04em; text-decoration: none;
+  color: var(--on-accent); background: var(--accent);
+  transition: transform 0.2s var(--spring), filter 0.2s;
+}
+.link-btn .arrow { font-size: 13px; opacity: 0.85; }
+.link-btn:hover { filter: brightness(1.06); }
+.link-btn:active { transform: scale(0.96); }
+.link-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .slot-meta { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
 .type-chip {
   display: inline-flex; align-items: center; gap: 4px;

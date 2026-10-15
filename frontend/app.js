@@ -21,21 +21,41 @@ const EXAMPLES = [
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-// A web address in an entry is a link that opens in a new tab (a small game, a song, a page for the other person). Only http(s)
-// is ever linked, and every piece of the text is escaped on its own, so nothing typed into an entry can become markup.
-// An address is plain ASCII, so the Chinese text right after it is not swallowed; closing punctuation belongs to the sentence.
+// A web address in an entry becomes a button under the text (a small game, a song, a page for the other person); the text keeps all
+// its other words. Only http(s) is ever linked, and every piece is escaped on its own, so nothing typed into an entry can become
+// markup. An address is plain ASCII, so the Chinese text right after it is not swallowed; closing punctuation stays in the sentence.
 const URL_RE = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
-function richText(text) {
-  const s = String(text);
-  let html = '';
-  let at = 0;
-  for (const m of s.matchAll(URL_RE)) {
-    const url = m[0].replace(/[.,;:!?)\]']+$/, '');
-    if (!/^https?:\/\/[^/?#]+/.test(url)) continue;
-    html += `${esc(s.slice(at, m.index))}<a class="text-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
-    at = m.index + url.length;
-  }
-  return html + esc(s.slice(at));
+const MAX_LINKS = 3;
+const LINK_LABEL = '点开看看';
+function splitLinks(text) {
+  const urls = [];
+  const lines = String(text).split('\n').map((line) => {
+    let linked = false;
+    const rest = line
+      .replace(URL_RE, (m) => {
+        const url = m.replace(/[.,;:!?)\]']+$/, '');
+        if (!/^https?:\/\/[^/?#]+/.test(url)) return m;
+        if (!urls.includes(url)) {
+          if (urls.length >= MAX_LINKS) return m; // more than that stay plain text
+          urls.push(url);
+        }
+        linked = true;
+        return m.slice(url.length);
+      })
+      .replace(/[^\S\n]{2,}/g, ' ')
+      .trim();
+    return linked && /^[\s\p{P}\p{S}]*$/u.test(rest) ? null : rest; // a line that held only an address (and maybe its brackets) goes away; a blank line the author wrote stays
+  });
+  return { text: lines.filter((l) => l !== null).join('\n'), urls };
+}
+function linkButtons(urls) {
+  if (!urls.length) return '';
+  const label = (i) => (urls.length > 1 ? `${LINK_LABEL} ${i + 1}` : LINK_LABEL);
+  return (
+    '<div class="slot-links">' +
+    urls.map((url, i) => `<a class="link-btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(url)}">${label(i)}<span class="arrow" aria-hidden="true">↗</span></a>`).join('') +
+    '</div>'
+  );
 }
 const pad = (n) => String(n).padStart(2, '0');
 const keyOf = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
@@ -157,6 +177,8 @@ function renderCalendar() {
 
 function slotHTML(e) {
   const t = typeOf(e.type);
+  const { text, urls } = splitLinks(e.text);
+  const links = linkButtons(urls);
   // a picture that could not be made is not an error the visitor needs to see: the built-in icon simply stays
   const status = e.status === 'pending' ? '<span class="slot-status">生成中…</span>' : '';
   const redeem = e.slot >= SLOTS ? '<span class="type-chip redeem">兑现</span>' : '';
@@ -166,12 +188,12 @@ function slotHTML(e) {
       `<div class="slot echo" role="button" tabindex="0" data-slot="${e.slot}" style="--c:${t.color}">` +
       `<div class="echo-head">${icon(e, 'card-icon')}` +
       `<span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>${redeem}${status}</div>` +
-      `<blockquote class="echo-text">${richText(e.text)}</blockquote></div>`
+      `${text ? `<blockquote class="echo-text">${esc(text)}</blockquote>` : ''}${links}</div>`
     );
   }
   return (
     `<div class="slot" role="button" tabindex="0" data-slot="${e.slot}">${icon(e, 'card-icon')}` +
-    `<div class="slot-body"><div class="slot-text">${richText(e.text)}</div>` +
+    `<div class="slot-body">${text ? `<div class="slot-text">${esc(text)}</div>` : ''}${links}` +
     `<div class="slot-meta"><span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>` +
     `${redeem}${status}</div></div></div>`
   );
