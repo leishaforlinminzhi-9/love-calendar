@@ -247,6 +247,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .slot:active { transform: scale(0.985); }
 .slot-body { flex: 1; min-width: 0; }
 .slot-text { font-size: 16px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+.text-link { color: inherit; font-weight: 600; text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.text-link:active { opacity: 0.6; }
 .slot-meta { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
 .type-chip {
   display: inline-flex; align-items: center; gap: 4px;

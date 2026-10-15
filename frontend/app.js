@@ -21,6 +21,22 @@ const EXAMPLES = [
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// A web address in an entry is a link that opens in a new tab (a small game, a song, a page for the other person). Only http(s)
+// is ever linked, and every piece of the text is escaped on its own, so nothing typed into an entry can become markup.
+// An address is plain ASCII, so the Chinese text right after it is not swallowed; closing punctuation belongs to the sentence.
+const URL_RE = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
+function richText(text) {
+  const s = String(text);
+  let html = '';
+  let at = 0;
+  for (const m of s.matchAll(URL_RE)) {
+    const url = m[0].replace(/[.,;:!?)\]']+$/, '');
+    if (!/^https?:\/\/[^/?#]+/.test(url)) continue;
+    html += `${esc(s.slice(at, m.index))}<a class="text-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
+    at = m.index + url.length;
+  }
+  return html + esc(s.slice(at));
+}
 const pad = (n) => String(n).padStart(2, '0');
 const keyOf = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
 const fmt = (d) => keyOf(d.getFullYear(), d.getMonth(), d.getDate());
@@ -150,12 +166,12 @@ function slotHTML(e) {
       `<div class="slot echo" role="button" tabindex="0" data-slot="${e.slot}" style="--c:${t.color}">` +
       `<div class="echo-head">${icon(e, 'card-icon')}` +
       `<span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>${redeem}${status}</div>` +
-      `<blockquote class="echo-text">${esc(e.text)}</blockquote></div>`
+      `<blockquote class="echo-text">${richText(e.text)}</blockquote></div>`
     );
   }
   return (
     `<div class="slot" role="button" tabindex="0" data-slot="${e.slot}">${icon(e, 'card-icon')}` +
-    `<div class="slot-body"><div class="slot-text">${esc(e.text)}</div>` +
+    `<div class="slot-body"><div class="slot-text">${richText(e.text)}</div>` +
     `<div class="slot-meta"><span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>` +
     `${redeem}${status}</div></div></div>`
   );
@@ -1332,6 +1348,7 @@ function bind() {
   });
 
   $('dayCard').addEventListener('click', (ev) => {
+    if (ev.target.closest('a')) return; // a link in an entry: let the browser follow it
     if (ev.target.closest('[data-busy]')) {
       markBusy(state.selected);
       return;
@@ -1345,6 +1362,7 @@ function bind() {
     if (slot) openEntry(state.selected, Number(slot.dataset.slot));
   });
   $('dayCard').addEventListener('keydown', (ev) => {
+    if (ev.target.closest?.('a')) return; // Enter on a link follows it
     const slot = ev.target.closest?.('.slot[role="button"]');
     if (slot && (ev.key === 'Enter' || ev.key === ' ')) {
       ev.preventDefault();
