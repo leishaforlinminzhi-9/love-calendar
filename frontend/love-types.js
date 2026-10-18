@@ -67,6 +67,16 @@ export const LOVE_TYPES = [
     keywords: ['做饭', '煮', '饭', '菜', '汤', '吃', '早餐', '午餐', '晚餐', '宵夜', '咖啡', '奶茶', '甜点', '烤', '面', '粥', '带了', 'cook', 'meal', 'soup', 'dinner', 'breakfast', 'coffee', 'milk tea', 'snack', 'bake', 'food'],
   },
   {
+    // fixedSubject: always drawn as the same flying disc, whatever the text says (one shared picture for all of them, like the hotel).
+    // winsTies: a very specific topic: when a text also matches another type just as well (一起打飞盘 is also 陪伴), the frisbee wins.
+    id: 'frisbee', label: '飞盘', emoji: '🥏', hint: '一起打盘 · 传盘 · 接盘', fixedSubject: true, winsTies: true,
+    from: '#DCE8FF', to: '#9DB8FF', color: '#6C8DFF',
+    colorName: 'sporty cobalt periwinkle blue', accentName: 'sunshine yellow',
+    motif: 'a plump glossy flying frisbee disc in sunshine yellow with a white rim ring, tilted as if it was just thrown, with two curved speed lines behind it and one tiny floating heart',
+    theme: 'playing frisbee together (ultimate frisbee: throwing, catching, a game, practice)',
+    keywords: ['飞盘', '极限飞盘', '打飞盘', '玩飞盘', '飞盘队', '传盘', '扔盘', '投盘', '接盘', 'frisbee', 'ultimate'],
+  },
+  {
     // fixedSubject: this category is always drawn as its own picture, whatever the text says (a hotel name, a city, a room)
     id: 'hotel', label: '酒店', emoji: '🛌', hint: '过夜 · 旅行 · 住一晚', fixedSubject: true,
     from: '#F6E6D8', to: '#DDB48D', color: '#C48F66',
@@ -128,7 +138,7 @@ export function tidyText(typeId, text) {
     .slice(0, max);
 }
 
-// Keyword scoring; ties resolve by the order above. No match -> 'other'.
+// Keyword scoring; ties resolve by the order above (a type with winsTies beats an equal score). No match -> 'other'.
 export function classify(text) {
   // a long text, or three or more lines, can only be a poem / letter: it would not fit any other type anyway
   const raw = String(text ?? '');
@@ -139,6 +149,7 @@ export function classify(text) {
   for (const t of LOVE_TYPES) {
     let score = 0;
     for (const k of t.keywords) if (s.includes(k)) score += 1;
+    if (score > 0 && t.winsTies) score += 0.5; // a half point: only breaks a tie
     if (score > bestScore) {
       best = t.id;
       bestScore = score;
