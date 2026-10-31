@@ -46,6 +46,8 @@ function defaultParams(model) {
 export function createApp({ env, store, ephemeralRisk = false }) {
   const cfg = {
     apiKey: env.IMAGE_API_KEY || '',
+    // IMAGE_PAUSED=true: draw no new icons (e.g. while the key is being replaced); stored icons are still handed out
+    paused: ['1', 'true', 'yes'].includes(String(env.IMAGE_PAUSED ?? '').toLowerCase()),
     apiBase: (env.IMAGE_API_BASE || 'https://api.openai.com/v1').replace(/\/+$/, ''),
     // gpt-image-1 (and -mini / 1.5) are being shut down by OpenAI between 2026-10-23 and 2026-12-01.
     model: env.IMAGE_MODEL || 'gpt-image-2.5-flare',
@@ -247,7 +249,8 @@ export function createApp({ env, store, ephemeralRisk = false }) {
     if (pathname === '/api/health' && method === 'GET') {
       return json(request, 200, {
         ok: true,
-        imageConfigured: Boolean(cfg.apiKey),
+        imageConfigured: Boolean(cfg.apiKey) && !cfg.paused,
+        imagePaused: cfg.paused,
         accessRequired: Boolean(cfg.accessCode) && !cfg.open,
         open: cfg.open,
         model: cfg.apiKey ? cfg.model : null,
@@ -307,8 +310,6 @@ export function createApp({ env, store, ephemeralRisk = false }) {
 
     if (pathname === '/api/generate' && method === 'POST') {
       requireAccess(request, ctx);
-      if (!cfg.apiKey) throw new HttpError(503, 'not_configured', '后端未配置图像 API');
-
       const { text, type, fresh, cacheOnly } = await readJson(request);
       if (!TYPE_IDS.includes(type)) throw new HttpError(400, 'bad_type', '未知的类型');
       // a type with a fixed subject ignores the text (a long poem is fine); every other type is drawn from it
@@ -336,6 +337,9 @@ export function createApp({ env, store, ephemeralRisk = false }) {
         }
       }
 
+      // only a real generation needs the key; looking up an icon that was already paid for never does
+      if (!cfg.apiKey) throw new HttpError(503, 'not_configured', '后端未配置图像 API');
+      if (cfg.paused) throw new HttpError(503, 'not_configured', '图标生成已暂停');
       const { image, prompt } = await generateOnce(key, type, clean, ctx);
       return json(request, 200, { image, prompt, cached: false, small: false, iconKey: key, budget: await ledger.status() });
     }

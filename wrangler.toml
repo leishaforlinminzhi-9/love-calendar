@@ -23,6 +23,9 @@ ALLOWED_ORIGINS = "https://leishaforlinminzhi-9.github.io"
 OPEN_ACCESS = "true"
 DAILY_LIMIT = "100"
 BUDGET_WARN_USD = "50"
+# "true" = draw no new icons (stored ones still show; new entries get the built-in icon). Paused 2026-11-01: the OpenAI key
+# stopped working ("no access to the project tied to the API key"). Put a new IMAGE_API_KEY secret in, then set this to "false".
+IMAGE_PAUSED = "true"
 
 # Run the Worker in ONE fixed cloud region instead of next to each visitor. By default a visitor in, say, Hong Kong makes
 # the Worker run in Hong Kong and call OpenAI from there, and OpenAI refuses calls from countries it does not serve

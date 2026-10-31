@@ -1308,7 +1308,7 @@ function renderApiStatus() {
   const h = state.health;
   let text = '检查中…';
   if (h === null) text = '未连接';
-  else if (h) text = !h.imageConfigured ? '后端未配置图像 API' : h.accessRequired && !accessCode.get() ? '需要访问口令' : `已连接 · ${h.model}`;
+  else if (h) text = h.imagePaused ? '图标生成已暂停 · 用内置图标' : !h.imageConfigured ? '后端未配置图像 API' : h.accessRequired && !accessCode.get() ? '需要访问口令' : `已连接 · ${h.model}`;
   $('apiStatus').textContent = text;
 
   // the passcode rows only make sense when the backend actually asks for one
