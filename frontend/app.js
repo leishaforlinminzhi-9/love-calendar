@@ -175,9 +175,40 @@ function renderCalendar() {
   $('days').innerHTML = html;
 }
 
+// A 回音 hung from the 拼贴诗 game carries a link that redraws its collage: show that picture instead of the words. The drawing
+// code is imported from the game's own page, so only that page is trusted (never a module named by an entry: anyone with
+// the sync link can write one).
+const COLLAGE_HOSTS = ['https://leishaforlinminzhi-9.github.io/poem/'];
+function collageOf(url) {
+  const m = /^(https?:\/\/[^#]+\/)#p=([A-Za-z0-9_-]+)$/.exec(url);
+  return m && COLLAGE_HOSTS.includes(m[1]) ? { base: m[1], code: m[2] } : null;
+}
+const collagePics = new Map(); // code -> picture (data URL), drawn once per visit
+async function drawCollages() {
+  for (const img of document.querySelectorAll('img[data-collage]:not([src])')) {
+    const { collage: code, base } = img.dataset;
+    try {
+      if (!collagePics.has(code)) {
+        collagePics.set(code, (async () => {
+          const c = await import(`${base}collage.js`);
+          const tiles = c.decode(code);
+          return (await c.render(tiles, 1.4, c.day(tiles.at))).toDataURL('image/jpeg', 0.9);
+        })());
+      }
+      img.src = await collagePics.get(code);
+    } catch (err) {
+      console.error('collage', err);
+      collagePics.delete(code);
+      img.closest('.collage')?.classList.add('failed'); // the words stay visible instead
+    }
+  }
+}
+
 function slotHTML(e) {
   const t = typeOf(e.type);
-  const { text, urls } = splitLinks(e.text);
+  const { text, urls: allUrls } = splitLinks(e.text);
+  const collage = t.multiline ? allUrls.map((u) => ({ u, ...collageOf(u) })).find((c) => c.code) : null;
+  const urls = collage ? allUrls.filter((u) => u !== collage.u) : allUrls;
   const links = linkButtons(urls);
   // a picture that could not be made is not an error the visitor needs to see: the built-in icon simply stays
   const status = e.status === 'pending' ? '<span class="slot-status">生成中…</span>' : '';
@@ -188,7 +219,11 @@ function slotHTML(e) {
       `<div class="slot echo" role="button" tabindex="0" data-slot="${e.slot}" style="--c:${t.color}">` +
       `<div class="echo-head">${icon(e, 'card-icon')}` +
       `<span class="type-chip" style="--from:${t.from};--to:${t.to}">${t.emoji} ${t.label}</span>${redeem}${status}</div>` +
-      `${text ? `<blockquote class="echo-text">${esc(text)}</blockquote>` : ''}${links}</div>`
+      (collage
+        ? `<a class="collage" href="${esc(collage.u)}" target="_blank" rel="noopener noreferrer"><img data-collage="${esc(collage.code)}" data-base="${esc(collage.base)}" alt="${esc(text)}">` +
+          `<blockquote class="echo-text">${esc(text)}</blockquote></a>`
+        : `${text ? `<blockquote class="echo-text">${esc(text)}</blockquote>` : ''}`) +
+      `${links}</div>`
     );
   }
   return (
@@ -256,6 +291,7 @@ function renderDay() {
     }
   }
   $('dayCard').innerHTML = html;
+  drawCollages();
 }
 
 function streak() {

@@ -521,5 +521,12 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
   font-family: var(--serif); font-size: 17px; line-height: 1.95; letter-spacing: 0.05em; font-weight: 400;
   white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink);
 }
+/* a 回音 from the 拼贴诗 game: its collage picture; the words only show if the picture cannot be drawn */
+.collage { display: block; margin: 12px 0 0; color: inherit; text-decoration: none; }
+.collage img { display: block; width: 100%; max-width: 420px; aspect-ratio: 3 / 4; margin: 0 auto; border-radius: 6px; background: #f6f0e3;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25); }
+.collage .echo-text { display: none; }
+.collage.failed img { display: none; }
+.collage.failed .echo-text { display: block; }
 textarea.echo-input { font-family: var(--serif); font-size: 17px; line-height: 1.9; letter-spacing: 0.04em; }
 .count.over { color: var(--danger); font-weight: 600; }
