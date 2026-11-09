@@ -364,9 +364,11 @@ export function createApp({ env, store, ephemeralRisk = false }) {
         if (out instanceof ReadableStream || out instanceof Response) { const text = await new Response(out instanceof Response ? out.body : out).text(); try { out = JSON.parse(text); } catch { out = { text }; } }
         return out?.result ?? out ?? {};
       };
+      const BOXES = false;
       const num = (v) => Number.isFinite(Number(v)) ? Number(v) : null;
       const found = await Promise.all(TARGETS.map(async ([label, target]) => {
-        const [pt, det] = await Promise.all([ask('point', target).catch((err) => ({ error: err.message })), ask('detect', target).catch((err) => ({ error: err.message }))]);
+        // (detect, the boxes, is off: the page no longer shows the areas; set BOXES = true to ask for them again)
+        const [pt, det] = await Promise.all([ask('point', target).catch((err) => ({ error: err.message })), BOXES ? ask('detect', target).catch((err) => ({ error: err.message })) : {}]);
         if (pt.error || det.error) console.error('[surfaces]', target, pt.error || det.error);
         const points = (pt.points ?? []).map((p) => [num(p.x), num(p.y)]).filter(([x, y]) => x !== null && y !== null).slice(0, 6);
         const boxes = (det.objects ?? []).map((o) => [num(o.x_min ?? o.xmin ?? o.x0), num(o.y_min ?? o.ymin ?? o.y0), num(o.x_max ?? o.xmax ?? o.x1), num(o.y_max ?? o.ymax ?? o.y1)]).filter((b) => b.every((v) => v !== null)).slice(0, 6);
