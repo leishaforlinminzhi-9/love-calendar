@@ -354,14 +354,14 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       const minute = Math.floor(Date.now() / 60_000), day = new Date().toISOString().slice(0, 10);
       if ((await store.counters.hit(`surf:${ctx.ip}:${minute}`, 120)) > 8) throw new HttpError(429, 'rate_limited', '请求过于频繁，请稍后再试');
       if ((await store.counters.hit(`surf:${day}`, 172_800)) > cfg.surfacesPerDay) throw new HttpError(429, 'daily_limit', '今天的识别次数用完了');
-      const { image } = await readJson(request, 400_000);
+      const { image, debug } = await readJson(request, 400_000);
       if (typeof image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image)) throw new HttpError(400, 'bad_image', '图片格式不正确');
       const TARGETS = [['桌面', 'the top surface of a table or desk'], ['地面', 'the floor'], ['平面', 'a flat surface where a small toy could stand']];
       const found = await Promise.all(TARGETS.map(async ([label, target]) => {
         try {
           const out = await cfg.ai.run('@cf/moondream/moondream3.1-9B-A2B', { task: 'point', image, target, max_objects: 6 });
           const list = out?.points ?? out?.result?.points ?? [];
-          return { label, points: list.map((p) => [Number(p.x), Number(p.y)]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)).slice(0, 6) };
+          return { label, ...(debug === true ? { raw: JSON.stringify(out).slice(0, 600) } : {}), points: list.map((p) => [Number(p.x), Number(p.y)]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)).slice(0, 6) };
         } catch (err) {
           console.error('[surfaces]', target, err.message);
           return { label, points: [], error: true };
