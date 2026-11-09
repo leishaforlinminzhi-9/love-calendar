@@ -357,17 +357,20 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       const { image, debug } = await readJson(request, 400_000);
       if (typeof image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image)) throw new HttpError(400, 'bad_image', '图片格式不正确');
       const TARGETS = [['桌面', 'the top surface of a table or desk'], ['地面', 'the floor'], ['平面', 'a flat surface where a small toy could stand']];
+      // two questions per kind of place: where exactly could she stand (point), and which part of the photo is it (detect: boxes)
+      const ask = async (task, target) => {
+        let out = await cfg.ai.run('@cf/moondream/moondream3.1-9B-A2B', { task, image, target, max_objects: 6, stream: false });
+        // some models hand back a stream or a Response: read it as JSON
+        if (out instanceof ReadableStream || out instanceof Response) { const text = await new Response(out instanceof Response ? out.body : out).text(); try { out = JSON.parse(text); } catch { out = { text }; } }
+        return out?.result ?? out ?? {};
+      };
+      const num = (v) => Number.isFinite(Number(v)) ? Number(v) : null;
       const found = await Promise.all(TARGETS.map(async ([label, target]) => {
-        try {
-          let out = await cfg.ai.run('@cf/moondream/moondream3.1-9B-A2B', { task: 'point', image, target, max_objects: 6, stream: false });
-          // some models hand back a stream or a Response: read it as JSON
-          if (out instanceof ReadableStream || out instanceof Response) { const text = await new Response(out instanceof Response ? out.body : out).text(); try { out = JSON.parse(text); } catch { out = { text }; } }
-          const list = out?.points ?? out?.result?.points ?? [];
-          return { label, ...(debug === true ? { raw: JSON.stringify(out).slice(0, 600), kind: `${typeof out}/${out?.constructor?.name}/${Object.keys(out ?? {}).join(',')}` } : {}), points: list.map((p) => [Number(p.x), Number(p.y)]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)).slice(0, 6) };
-        } catch (err) {
-          console.error('[surfaces]', target, err.message);
-          return { label, points: [], error: true };
-        }
+        const [pt, det] = await Promise.all([ask('point', target).catch((err) => ({ error: err.message })), ask('detect', target).catch((err) => ({ error: err.message }))]);
+        if (pt.error || det.error) console.error('[surfaces]', target, pt.error || det.error);
+        const points = (pt.points ?? []).map((p) => [num(p.x), num(p.y)]).filter(([x, y]) => x !== null && y !== null).slice(0, 6);
+        const boxes = (det.objects ?? []).map((o) => [num(o.x_min ?? o.xmin ?? o.x0), num(o.y_min ?? o.ymin ?? o.y0), num(o.x_max ?? o.xmax ?? o.x1), num(o.y_max ?? o.ymax ?? o.y1)]).filter((b) => b.every((v) => v !== null)).slice(0, 6);
+        return { label, points, boxes, ...(debug === true ? { raw: JSON.stringify({ pt, det }).slice(0, 900) } : {}) };
       }));
       return json(request, 200, { surfaces: found });
     }
