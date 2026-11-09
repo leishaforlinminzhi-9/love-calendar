@@ -27,6 +27,10 @@ BUDGET_WARN_USD = "50"
 # stopped working ("no access to the project tied to the API key"). Put a new IMAGE_API_KEY secret in, then set this to "false".
 IMAGE_PAUSED = "true"
 
+# Workers AI: the vision model that finds the flat places in a photo for 小狗跳进照片 (POST /api/surfaces; free daily allowance)
+[ai]
+binding = "AI"
+
 # Run the Worker in ONE fixed cloud region instead of next to each visitor. By default a visitor in, say, Hong Kong makes
 # the Worker run in Hong Kong and call OpenAI from there, and OpenAI refuses calls from countries it does not serve
 # ("Country, region, or territory not supported"). Pinning it to a supported region fixes that for every visitor.
