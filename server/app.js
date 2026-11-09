@@ -359,9 +359,11 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       const TARGETS = [['桌面', 'the top surface of a table or desk'], ['地面', 'the floor'], ['平面', 'a flat surface where a small toy could stand']];
       const found = await Promise.all(TARGETS.map(async ([label, target]) => {
         try {
-          const out = await cfg.ai.run('@cf/moondream/moondream3.1-9B-A2B', { task: 'point', image, target, max_objects: 6 });
+          let out = await cfg.ai.run('@cf/moondream/moondream3.1-9B-A2B', { task: 'point', image, target, max_objects: 6 });
+          // some models hand back a stream or a Response: read it as JSON
+          if (out instanceof ReadableStream || out instanceof Response) { const text = await new Response(out instanceof Response ? out.body : out).text(); try { out = JSON.parse(text); } catch { out = { text }; } }
           const list = out?.points ?? out?.result?.points ?? [];
-          return { label, ...(debug === true ? { raw: JSON.stringify(out).slice(0, 600) } : {}), points: list.map((p) => [Number(p.x), Number(p.y)]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)).slice(0, 6) };
+          return { label, ...(debug === true ? { raw: JSON.stringify(out).slice(0, 600), kind: `${typeof out}/${out?.constructor?.name}/${Object.keys(out ?? {}).join(',')}` } : {}), points: list.map((p) => [Number(p.x), Number(p.y)]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)).slice(0, 6) };
         } catch (err) {
           console.error('[surfaces]', target, err.message);
           return { label, points: [], error: true };
