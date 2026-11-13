@@ -25,9 +25,14 @@ export function createFileStore(dir) {
   const visitsFile = join(dir, 'visits.json');
   const countersFile = join(dir, 'counters.json');
 
+  const frisbeeFile = join(dir, 'frisbee.json');
+
   const entries = readJsonFile(entriesFile, {});
   const visits = readJsonFile(visitsFile, {});
   const counters = readJsonFile(countersFile, {});
+  const games = readJsonFile(frisbeeFile, {}); // 飞盘计分: id -> { info, points: { id: point }, deleted: [id], rev }
+  const saveGames = () => writeJsonFile(frisbeeFile, games);
+  const newestFirst = () => Object.entries(games).sort((a, b) => b[1].info.created - a[1].info.created);
   const windows = new Map(); // rate-limit windows live in memory only: they are meant to be short-lived
   const saveCounters = () => writeJsonFile(countersFile, counters);
   const iconFile = (key) => join(dir, 'icons', `${key}.txt`);
@@ -126,6 +131,54 @@ export function createFileStore(dir) {
         }
         w.n += 1;
         return w.n;
+      },
+    },
+
+    frisbee: {
+      async latest() {
+        return newestFirst()[0]?.[0] ?? null;
+      },
+      async list(limit) {
+        return newestFirst()
+          .slice(0, limit)
+          .map(([id, g]) => ({ id, created: g.info.created, first: g.first ?? null, teams: g.info.teams.map((t) => t.name), points: Object.keys(g.points).filter((k) => !g.deleted.includes(k)).length }));
+      },
+      async info(game) {
+        return games[game]?.info ?? null;
+      },
+      async rev(game) {
+        return games[game]?.rev ?? 0;
+      },
+      async state(game) {
+        const g = games[game];
+        if (!g) return null;
+        return { rev: g.rev, info: g.info, points: Object.values(g.points).map((p) => (g.deleted.includes(p.id) ? { ...p, deleted: true } : p)) };
+      },
+      async create(game, info) {
+        games[game] = { info, points: {}, deleted: [], rev: 1 };
+        saveGames();
+      },
+      async putInfo(game, info) {
+        const g = games[game];
+        g.info = info;
+        g.rev += 1;
+        saveGames();
+        return g.rev;
+      },
+      async addPoint(game, point) {
+        const g = games[game];
+        g.points[point.id] ??= point;
+        g.first ??= point.at;
+        g.rev += 1;
+        saveGames();
+        return g.rev;
+      },
+      async setDeleted(game, id, deleted) {
+        const g = games[game];
+        g.deleted = deleted ? [...new Set([...g.deleted, id])] : g.deleted.filter((k) => k !== id);
+        g.rev += 1;
+        saveGames();
+        return g.rev;
       },
     },
   };

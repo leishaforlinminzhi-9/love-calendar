@@ -243,6 +243,54 @@ export function createApp({ env, store, ephemeralRisk = false }) {
     return job;
   }
 
+  // ---------- 飞盘计分 (a frisbee day: teams take turns, every point is saved here so all phones see the same score) ----------
+
+  const FB_ID_RE = /^[a-z0-9]{6,32}$/;
+  // a team or player name: no spaces, nothing that splits a roster line, nothing HTML could misread
+  const FB_NAME_RE = /^[^\s<>&"'`\\|｜:：,，、]+$/u;
+  const fbName = (s, max) => typeof s === 'string' && [...s].length <= max && FB_NAME_RE.test(s);
+  // Every open page asks every few seconds whether anything changed. The answer is remembered for a moment, so most of
+  // those polls cost no database call: a change made through this copy of the Worker updates it at once, one made
+  // through another copy shows up within 2 s.
+  const fbRevs = new Map(); // game -> { rev, at }
+  let fbLatest = { id: null, at: 0 };
+
+  async function fbRev(game) {
+    const hit = fbRevs.get(game);
+    if (hit && Date.now() - hit.at < 2000) return hit.rev;
+    const rev = await store.frisbee.rev(game);
+    fbRevs.set(game, { rev, at: Date.now() });
+    return rev;
+  }
+
+  async function fbLatestId() {
+    if (Date.now() - fbLatest.at < 15_000) return fbLatest.id;
+    fbLatest = { id: await store.frisbee.latest(), at: Date.now() };
+    return fbLatest.id;
+  }
+
+  // teams: [{ name, groups: [[player, ...], [player, ...]] }] (two groups = the two rows the roster was written in)
+  function fbTeams(teams) {
+    if (!Array.isArray(teams) || teams.length < 2 || teams.length > 4) throw new HttpError(400, 'bad_teams', '需要 2–4 支队伍');
+    const names = new Set();
+    return teams.map((t, i) => {
+      const name = String(t?.name ?? '').trim();
+      if (!fbName(name, 8) || names.has(name)) throw new HttpError(400, 'bad_teams', `第 ${i + 1} 队的队名不行（1–8 个字，不重复，不带空格和标点）`);
+      names.add(name);
+      const groups = (Array.isArray(t.groups) ? t.groups : []).slice(0, 2).map((g) => (Array.isArray(g) ? g : []).map((n) => String(n ?? '').trim()));
+      const players = groups.flat();
+      const bad = players.find((n, k) => !fbName(n, 12) || players.indexOf(n) !== k);
+      if (bad !== undefined) throw new HttpError(400, 'bad_teams', `${name}的「${bad}」不行（名字 1–12 个字，同一队不重名）`);
+      if (players.length < 1 || players.length > 20) throw new HttpError(400, 'bad_teams', `${name}需要 1–20 个人`);
+      return { name, groups };
+    });
+  }
+
+  async function fbWriteLimit(ip) {
+    const minute = Math.floor(Date.now() / 60_000);
+    if ((await store.counters.hit(`fb:${ip}:${minute}`, 120)) > 60) throw new HttpError(429, 'rate_limited', '记得太快了，歇一下再试');
+  }
+
   // ---------- routes ----------
 
   async function route(request, ctx) {
@@ -375,6 +423,73 @@ export function createApp({ env, store, ephemeralRisk = false }) {
         return { label, points, boxes, ...(debug === true ? { raw: JSON.stringify({ pt, det }).slice(0, 900) } : {}) };
       }));
       return json(request, 200, { surfaces: found });
+    }
+
+    // ----- 飞盘计分: for every point, which two teams played, which of them scored and who threw the assist -----
+
+    // one game as it stands (the newest unless `game` is given); `rev` = the revision the page already has
+    if (pathname === '/api/frisbee/state' && method === 'POST') {
+      const { game: asked, rev } = await readJson(request, 512);
+      const latest = await fbLatestId();
+      const game = FB_ID_RE.test(String(asked ?? '')) ? asked : latest;
+      if (!game) return json(request, 200, { game: null, latest: null });
+      if (Number.isInteger(rev) && rev === (await fbRev(game))) return json(request, 200, { game, latest, rev, same: true });
+      const state = await store.frisbee.state(game);
+      if (!state) throw new HttpError(404, 'no_game', '没有这场比赛');
+      fbRevs.set(game, { rev: state.rev, at: Date.now() });
+      return json(request, 200, { game, latest, ...state });
+    }
+
+    if (pathname === '/api/frisbee/games' && method === 'POST') {
+      return json(request, 200, { games: await store.frisbee.list(40), latest: await fbLatestId() });
+    }
+
+    // record a point ({ game, id, at, a, b, team, assist, by }), take one back ({ game, id, deleted: true }) or put it back (false)
+    if (pathname === '/api/frisbee/point' && method === 'POST') {
+      await fbWriteLimit(ctx.ip);
+      const p = await readJson(request, 2048);
+      const game = String(p.game ?? ''), id = String(p.id ?? '');
+      if (!FB_ID_RE.test(game) || !FB_ID_RE.test(id)) throw new HttpError(400, 'bad_point', '比赛或这一分的编号不对');
+      const info = await store.frisbee.info(game);
+      if (!info) throw new HttpError(404, 'no_game', '没有这场比赛');
+      let rev;
+      if (typeof p.deleted === 'boolean') rev = await store.frisbee.setDeleted(game, id, p.deleted);
+      else {
+        const isTeam = (v) => Number.isInteger(v) && v >= 0 && v < info.teams.length;
+        if (!isTeam(p.a) || !isTeam(p.b) || p.a === p.b || (p.team !== p.a && p.team !== p.b)) throw new HttpError(400, 'bad_point', '对战的两队或得分的队不对');
+        const assist = p.assist === null || p.assist === undefined || p.assist === '' ? null : String(p.assist).trim();
+        if (assist !== null && !fbName(assist, 12)) throw new HttpError(400, 'bad_point', '助攻的名字不对');
+        const now = Date.now();
+        // when the point was recorded on the phone: it may only upload later, from a field without signal
+        const at = Number.isFinite(p.at) && p.at > now - 30 * 86_400_000 && p.at < now + 600_000 ? Math.round(p.at) : now;
+        const by = FB_ID_RE.test(String(p.by ?? '')) ? p.by : null;
+        rev = await store.frisbee.addPoint(game, { id, at, a: p.a, b: p.b, team: p.team, assist, by, t: now });
+      }
+      fbRevs.set(game, { rev, at: Date.now() });
+      return json(request, 200, { ok: true, rev });
+    }
+
+    // start a new game ({ teams }), or rename the teams and players of one ({ game, teams })
+    if (pathname === '/api/frisbee/game' && method === 'POST') {
+      await fbWriteLimit(ctx.ip);
+      const p = await readJson(request, 8192);
+      const teams = fbTeams(p.teams);
+      if (p.game !== undefined) {
+        const game = String(p.game);
+        const info = FB_ID_RE.test(game) ? await store.frisbee.info(game) : null;
+        if (!info) throw new HttpError(404, 'no_game', '没有这场比赛');
+        // points name their teams by position, so a game keeps its number of teams
+        if (teams.length !== info.teams.length) throw new HttpError(400, 'bad_teams', `这场是 ${info.teams.length} 支队伍，要换队伍数就开新的一场`);
+        const rev = await store.frisbee.putInfo(game, { ...info, teams, edited: Date.now() });
+        fbRevs.set(game, { rev, at: Date.now() });
+        return json(request, 200, { game, rev });
+      }
+      if ((await store.counters.hit(`fbnew:${new Date().toISOString().slice(0, 10)}`, 172_800)) > 30) throw new HttpError(429, 'daily_limit', '今天开的比赛太多了');
+      const created = Date.now();
+      const game = `g${created.toString(36)}${crypto.randomUUID().replace(/-/g, '').slice(0, 6)}`;
+      await store.frisbee.create(game, { teams, created });
+      fbLatest = { id: game, at: Date.now() };
+      return json(request, 200, { game, rev: 1 });
     }
 
     throw new HttpError(404, 'not_found', '接口不存在');

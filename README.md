@@ -214,6 +214,10 @@ Pages 免费版需要**公开仓库**。`.env` 已在 `.gitignore` 里，密钥�
 - **怎么看**：打开 `https://你的网址/visits.html`，直接就是列表和汇总，不需要密钥。**知道这个网址的人都能看到**（内容只有时间、时长和设备类型）。想加一道锁的话，给后端设一个密钥 `VISITS_KEY`（Cloudflare → Workers & Pages → love-calendar-api → Settings → Variables and secrets → Add → Secret），页面会自动出现输入框。
 - 写入接口 `/api/visit` 做了限流（每个地址每分钟 30 次）和严格校验，只接受编号、设备类型和秒数。
 
+## 飞盘计分（另一个网页用的接口）
+
+[飞盘计分](https://leishaforlinminzhi-9.github.io/frisbee/)（源码在 `leishaforlinminzhi-9.github.io` 仓库的 `frisbee/`）把每一分存在这个后端：`POST /api/frisbee/state` 读一场比赛（带上 `rev` 而且没有变化时只回 `same`，所以每台手机每 8 秒问一次也几乎不用数据库）、`/api/frisbee/games` 比赛列表、`/api/frisbee/point` 记一分 / 删掉 / 恢复、`/api/frisbee/game` 开新的一场 / 改名单。数据和日记在同一个 Upstash 里，但键名都以 `love:fb:` 开头，互不影响；删掉的分只是做了标记，可以恢复。写入每个地址每分钟最多 60 次（经过 Netlify 时大家共用这一份），开新比赛每天最多 30 次。
+
 ## 访问保护
 
 后端公开在互联网上，里面是日记，生成图片还要花钱。

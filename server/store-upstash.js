@@ -6,6 +6,7 @@
 //   icons.get / getMany / put               small icon images, kept apart from the entries
 //   counters.*                              atomic numbers: revisions, spend ledger, rate limits
 //   visits.report / visits.recent           the anonymous visit log (when, for how long, which kind of device)
+//   frisbee.*                               飞盘计分: games (teams), their points and a revision per game
 //
 // Calls are batched on purpose: a Cloudflare Worker may make only 50 outgoing requests per invocation.
 
@@ -150,6 +151,78 @@ export function createUpstashStore({ url, token }) {
         const n = Number(await cmd('INCR', `love:rate:${name}`));
         if (n === 1) await cmd('EXPIRE', `love:rate:${name}`, ttlSeconds);
         return n;
+      },
+    },
+
+    // 飞盘计分: per game its teams (JSON), its points (hash: id -> JSON), the ids taken back (set) and a revision that
+    // goes up with every change; the games in a sorted set by when they were started
+    frisbee: {
+      async latest() {
+        return (await cmd('ZREVRANGE', 'love:fb:games', 0, 0))?.[0] ?? null;
+      },
+      async list(limit) {
+        const ids = (await cmd('ZREVRANGE', 'love:fb:games', 0, limit - 1)) ?? [];
+        if (!ids.length) return [];
+        const rows = await pipeline([
+          ...ids.flatMap((id) => [['GET', `love:fb:game:${id}`], ['HKEYS', `love:fb:points:${id}`], ['SMEMBERS', `love:fb:deleted:${id}`]]),
+          ['HMGET', 'love:fb:first', ...ids],
+        ]);
+        const firsts = rows.at(-1) ?? [];
+        return ids
+          .map((id, i) => {
+            const [raw, keys, deleted] = rows.slice(i * 3, i * 3 + 3);
+            if (!raw) return null;
+            const info = JSON.parse(raw);
+            const gone = new Set(deleted ?? []);
+            const first = Number(firsts[i]) || null; // when its first point was played: the game's day in the list
+            return { id, created: info.created, first, teams: info.teams.map((t) => t.name), points: (keys ?? []).filter((k) => !gone.has(k)).length };
+          })
+          .filter(Boolean);
+      },
+      async info(game) {
+        const raw = await cmd('GET', `love:fb:game:${game}`);
+        return raw ? JSON.parse(raw) : null;
+      },
+      async rev(game) {
+        return Number(await cmd('GET', `love:fb:rev:${game}`)) || 0;
+      },
+      async state(game) {
+        // the revision is read first: a point written in between then simply comes again with the next revision
+        const [rev, raw, flat, deleted] = await pipeline([
+          ['GET', `love:fb:rev:${game}`],
+          ['GET', `love:fb:game:${game}`],
+          ['HGETALL', `love:fb:points:${game}`],
+          ['SMEMBERS', `love:fb:deleted:${game}`],
+        ]);
+        if (!raw) return null;
+        const gone = new Set(deleted ?? []);
+        const values = Array.isArray(flat) ? flat.filter((_, i) => i % 2 === 1) : Object.values(flat ?? {});
+        const points = values.map((v) => JSON.parse(v)).map((p) => (gone.has(p.id) ? { ...p, deleted: true } : p));
+        return { rev: Number(rev) || 0, info: JSON.parse(raw), points };
+      },
+      async create(game, info) {
+        await pipeline([
+          ['SET', `love:fb:game:${game}`, JSON.stringify(info)],
+          ['SET', `love:fb:rev:${game}`, 1],
+          ['ZADD', 'love:fb:games', info.created, game],
+        ]);
+      },
+      async putInfo(game, info) {
+        const [, rev] = await pipeline([['SET', `love:fb:game:${game}`, JSON.stringify(info)], ['INCR', `love:fb:rev:${game}`]]);
+        return Number(rev);
+      },
+      // idempotent: a phone that sends the same point twice (no answer the first time) still adds it once
+      async addPoint(game, point) {
+        const [, , rev] = await pipeline([
+          ['HSETNX', `love:fb:points:${game}`, point.id, JSON.stringify(point)],
+          ['HSETNX', 'love:fb:first', game, point.at],
+          ['INCR', `love:fb:rev:${game}`],
+        ]);
+        return Number(rev);
+      },
+      async setDeleted(game, id, deleted) {
+        const [, rev] = await pipeline([[deleted ? 'SADD' : 'SREM', `love:fb:deleted:${game}`, id], ['INCR', `love:fb:rev:${game}`]]);
+        return Number(rev);
       },
     },
   };
