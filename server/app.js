@@ -444,7 +444,7 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       return json(request, 200, { games: await store.frisbee.list(40), latest: await fbLatestId() });
     }
 
-    // record a point ({ game, id, at, a, b, team, assist, by }), take one back ({ game, id, deleted: true }) or put it back (false)
+    // record a point ({ game, id, at, a, b, team, assist, goal, by }), take one back ({ game, id, deleted: true }) or put it back (false)
     if (pathname === '/api/frisbee/point' && method === 'POST') {
       await fbWriteLimit(ctx.ip);
       const p = await readJson(request, 2048);
@@ -457,13 +457,17 @@ export function createApp({ env, store, ephemeralRisk = false }) {
       else {
         const isTeam = (v) => Number.isInteger(v) && v >= 0 && v < info.teams.length;
         if (!isTeam(p.a) || !isTeam(p.b) || p.a === p.b || (p.team !== p.a && p.team !== p.b)) throw new HttpError(400, 'bad_point', '对战的两队或得分的队不对');
-        const assist = p.assist === null || p.assist === undefined || p.assist === '' ? null : String(p.assist).trim();
+        // who threw the assist and who caught the goal; either may be missing (no assist, nobody remembers)
+        const player = (v) => (v === null || v === undefined || v === '' ? null : String(v).trim());
+        const assist = player(p.assist), goal = player(p.goal);
         if (assist !== null && !fbName(assist, 12)) throw new HttpError(400, 'bad_point', '助攻的名字不对');
+        if (goal !== null && !fbName(goal, 12)) throw new HttpError(400, 'bad_point', '得分的名字不对');
+        if (assist !== null && assist === goal) throw new HttpError(400, 'bad_point', '助攻和得分不能是同一个人');
         const now = Date.now();
         // when the point was recorded on the phone: it may only upload later, from a field without signal
         const at = Number.isFinite(p.at) && p.at > now - 30 * 86_400_000 && p.at < now + 600_000 ? Math.round(p.at) : now;
         const by = FB_ID_RE.test(String(p.by ?? '')) ? p.by : null;
-        rev = await store.frisbee.addPoint(game, { id, at, a: p.a, b: p.b, team: p.team, assist, by, t: now });
+        rev = await store.frisbee.addPoint(game, { id, at, a: p.a, b: p.b, team: p.team, assist, goal, by, t: now });
       }
       fbRevs.set(game, { rev, at: Date.now() });
       return json(request, 200, { ok: true, rev });
